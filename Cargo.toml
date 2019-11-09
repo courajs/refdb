@@ -6,3 +6,4 @@ edition = "2018"
 
 [dependencies]
 rkv = "0.10.2"
+num = "0.2.0"
