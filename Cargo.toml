@@ -1,0 +1,8 @@
+[package]
+name = "rf0"
+version = "0.1.0"
+authors = ["Aaron Sikes <aaron@sikes.io>"]
+edition = "2018"
+
+[dependencies]
+rkv = "0.10.2"
