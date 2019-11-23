@@ -108,6 +108,11 @@ dependencies = [
 ]
 
 [[package]]
+name = "hex"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
 name = "hex-literal"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -407,6 +412,7 @@ dependencies = [
 name = "rf0"
 version = "0.1.0"
 dependencies = [
+ "hex 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "hex-literal 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "num 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.6.5 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -565,6 +571,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 "checksum failure_derive 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)" = "0bc225b78e0391e4b8683440bf2e63c2deeeb2ce5189eab46e2b68c6d3725d08"
 "checksum fuchsia-cprng 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)" = "a06f77d526c1a601b7c4cdd98f54b5eaabffc14d5f2f0296febdc7f357c6d3ba"
 "checksum generic-array 0.12.3 (registry+https://github.com/rust-lang/crates.io-index)" = "c68f0274ae0e023facc3c97b2e00f076be70e254bc851d972503b328db79b2ec"
+"checksum hex 0.4.0 (registry+https://github.com/rust-lang/crates.io-index)" = "023b39be39e3a2da62a94feb433e91e8bcd37676fbc8bea371daf52b7a769a3e"
 "checksum hex-literal 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "961de220ec9a91af2e1e5bd80d02109155695e516771762381ef8581317066e0"
 "checksum hex-literal-impl 0.2.1 (registry+https://github.com/rust-lang/crates.io-index)" = "9d4c5c844e2fee0bf673d54c2c177f1713b3d2af2ff6e666b49cb7572e6cf42d"
 "checksum idna 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)" = "02e2673c30ee86b5b96a9cb52ad15718aa1f966f5ab9ad54a8b95d5ca33120a9"

@@ -4,14 +4,20 @@ use rkv::{Manager, Rkv, SingleStore, Value, StoreOptions};
 use num::{BigUint};
 use sha3::{Digest, Sha3_256};
 use sha3::digest::generic_array::GenericArray;
+use std::fmt;
 
 #[macro_use] extern crate hex_literal;
 
-#[derive(Copy,Clone,Debug)]
+#[derive(Copy,Clone)]
 struct Hash([u8; 32]);
 impl AsRef<[u8]> for Hash {
     fn as_ref(&self) -> &[u8] {
         &self.0
+    }
+}
+impl fmt::Debug for Hash {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "sha-256:{}", hex::encode(self.0))
     }
 }
 
@@ -40,11 +46,17 @@ impl Storable for Blob {
 }
 
 // Algebraic Data Type
-#[derive(Debug)]
+// #[derive(Debug)]
 struct ADT {
     uniqueness: [u8; 16],
     value: ADTItem,
 }
+impl fmt::Debug for ADT {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "ADT {{ \n    uniqueness: 0x{},\n    value: {:#?} }}", &hex::encode(self.uniqueness), &self.value)
+    }
+}
+
 #[derive(Debug)]
 enum ADTItem {
     Hash(Hash),
@@ -62,7 +74,7 @@ impl ADTItem {
             }
             ADTItem::Sum(items) => {
                 result.push(1);
-                result.push(items.len() as u8);
+                result.extend_from_slice(&items.len().to_be_bytes());
                 for item in items {
                     result.extend_from_slice(&item.bytes());
                 }
@@ -70,7 +82,7 @@ impl ADTItem {
             }
             ADTItem::Product(items) => {
                 result.push(2);
-                result.push(items.len() as u8);
+                result.extend_from_slice(&items.len().to_be_bytes());
                 for item in items {
                     result.extend_from_slice(&item.bytes());
                 }
@@ -134,8 +146,13 @@ fn main() {
 
     let t_blob = ADT {
         uniqueness: [0; 16],
-        value: ADTItem::Hash(BlobTypeHash),
+        value: ADTItem::Product(vec![
+                    ADTItem::Hash(BlobTypeHash),
+                    ADTItem::Hash(BlobTypeHash)
+        ]),
     };
+
+    dbg!(&t_blob);
 
     {
         // Use a write transaction to mutate the store via a `Writer`.
