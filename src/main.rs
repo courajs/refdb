@@ -7,7 +7,7 @@ use sha3::digest::generic_array::GenericArray;
 
 #[macro_use] extern crate hex_literal;
 
-#[derive(Clone,Debug)]
+#[derive(Copy,Clone,Debug)]
 struct Hash([u8; 32]);
 impl AsRef<[u8]> for Hash {
     fn as_ref(&self) -> &[u8] {
@@ -132,6 +132,11 @@ fn main() {
         data_hash: b.hash(),
     };
 
+    let t_blob = ADT {
+        uniqueness: [0; 16],
+        value: ADTItem::Hash(BlobTypeHash),
+    };
+
     {
         // Use a write transaction to mutate the store via a `Writer`.
         // There can be only one writer for a given environment, so opening
@@ -139,6 +144,7 @@ fn main() {
         let mut writer = env.write().unwrap();
 
         put(&store, &mut writer, &b);
+        put(&store, &mut writer, &t_blob);
         // store.put(&mut writer, &b.hash(), &Value::Blob(&b.serialize()));
 
         writer.commit().unwrap();
@@ -146,8 +152,10 @@ fn main() {
 
     {
         let reader = env.read().expect("reader");
-        if let Ok(Some(Value::Blob(bytes))) = store.get(&reader, &b.hash()) {
-            println!("Got {}", std::str::from_utf8(bytes).unwrap());
+        if let Ok(Some(Value::Blob(bytes))) = store.get(&reader, &t_blob.hash()) {
+            dbg!(bytes.len());
+            dbg!(bytes);
+            //println!("Got {}", std::str::from_utf8(bytes).unwrap());
         } else {
             println!("um.");
         }
