@@ -7,4 +7,6 @@ edition = "2018"
 [dependencies]
 rkv = "0.10.2"
 num = "0.2.0"
-uuid = { version = "0.7.4", features = ["v4"] }
+rand = "0.6.5"
+sha3 = "0.8.2"
+hex-literal = "0.2.1"

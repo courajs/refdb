@@ -1,61 +1,91 @@
 use std::path::Path;
+use std::convert::{TryFrom, TryInto};
 use rkv::{Manager, Rkv, SingleStore, Value, StoreOptions};
 use num::{BigUint};
-use uuid::Uuid;
+use sha3::{Digest, Sha3_256};
+use sha3::digest::generic_array::GenericArray;
+
+#[macro_use] extern crate hex_literal;
+
+struct Blob {
+    bytes: Vec<u8>,
+}
+
+impl Blob {
+    fn serialize(&self) -> Vec<u8> {
+        let mut v = Vec::with_capacity(&self.bytes.capacity() + 1);
+        v.push(0);
+        v.extend_from_slice(&self.bytes);
+        v
+    }
+
+    fn hash(&self) -> GenericArray<u8, <Sha3_256 as Digest>::OutputSize> {
+        let mut hasher = Sha3_256::new();
+        hasher.input(&[0]);
+        hasher.input(&self.bytes);
+        return hasher.result()
+    }
+}
+
+#[derive(Clone)]
+struct Hash {
+    val: [u8; 32],
+}
+
+#[derive(Debug)]
+pub struct HashLengthError(());
+
+impl TryFrom<&[u8]> for Hash {
+    type Error = HashLengthError;
+
+    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
+        if let Ok(val) = bytes.try_into() {
+            Ok(Hash { val })
+        } else {
+            Err(HashLengthError(()))
+        }
+    }
+}
+
+
+struct Typing {
+    type_hash: Hash,
+    data_hash: Hash,
+}
 
 
 fn main() {
-    let mut bytes = [0; 16];
-    bytes[15] = 12;
-    let s = &bytes;
-    dbg!(s.len());
-    let uuid = Uuid::from_slice(&bytes).unwrap();
-    dbg!(uuid);
-    return;
-
-    dbg!(uuid::Uuid::new_v4());
-    dbg!(uuid::Uuid::new_v4());
-    let big: BigUint = BigUint::from(u64::max_value()) + 1u8;
-    dbg!(u64::max_value());
-    dbg!(big.to_str_radix(10));
     let created_arc = Manager::singleton().write().unwrap().get_or_create(Path::new("/Users/aaron/dev/rkv/data"), Rkv::new).unwrap();
     let env = created_arc.read().unwrap();
     let store: SingleStore = env.open_single("mydb", StoreOptions::create()).unwrap();
 
-    let id = Uuid::new_v4();
-    dbg!(id);
+    let b = Blob { bytes: b"abc"[..].into() };
+
+    let h: Hash = b.hash().as_ref().try_into().expect("round trip");
+
+    let t = Typing {
+        type_hash: h.clone(),
+        data_hash: h,
+    };
 
     {
         // Use a write transaction to mutate the store via a `Writer`.
         // There can be only one writer for a given environment, so opening
         // a second one will block until the first completes.
         let mut writer = env.write().unwrap();
-        store.put(&mut writer, "int", &Value::I64(1234)).unwrap();
-        store.put(&mut writer, "big", &Value::Blob(&big.to_bytes_be()));
 
-        store.put(&mut writer, "uu", &Value::Blob(id.as_bytes()));
+        store.put(&mut writer, &b.hash(), &Value::Blob(&b.serialize()));
 
         writer.commit().unwrap();
     }
 
     {
         let reader = env.read().expect("reader");
-        println!("Get int {:?}", store.get(&reader, "int").unwrap());
-        println!("Get null {:?}", store.get(&reader, "nah").unwrap());
-        let r = store.get(&reader, "uu");
-        match r {
-            Ok(Some(Value::Blob(blob))) => {
-                dbg!(Uuid::from_slice(blob));
-            }
-            _ => {dbg!(r);}
+        if let Ok(Some(Value::Blob(bytes))) = store.get(&reader, &b.hash()) {
+            println!("Got {}", std::str::from_utf8(bytes).unwrap());
+        } else {
+            println!("um.");
         }
-        // println!("Get uuid {:?}", store.get(&reader, id.as_bytes()).unwrap());
-        let big = store.get(&reader, "big").unwrap();
-        if let Some(Value::Blob(bytes)) = big {
-            let big2 = BigUint::from_bytes_be(bytes);
-            dbg!(big2.to_str_radix(10));
-        }
-        println!("Get big {:?}", store.get(&reader, "big").unwrap());
     }
 }
 
