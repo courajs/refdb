@@ -8,24 +8,20 @@ use sha3::digest::generic_array::GenericArray;
 #[macro_use] extern crate hex_literal;
 
 trait Storable {
-    fn hash(&self) -> Hash;
     fn bytes(&self) -> Vec<u8>;
+    fn hash(&self) -> Hash {
+        let mut val: [u8; 32] = Default::default();
+        let mut hasher = Sha3_256::new();
+        hasher.input(&self.bytes());
+        val.copy_from_slice(hasher.result().as_ref());
+        Hash(val)
+    }
 }
 
 struct Blob {
     bytes: Vec<u8>,
 }
-
 impl Storable for Blob {
-    fn hash(&self) -> Hash {
-        let mut val: [u8; 32] = Default::default();
-        let mut hasher = Sha3_256::new();
-        hasher.input(&[0]);
-        hasher.input(&self.bytes);
-        val.copy_from_slice(hasher.result().as_ref());
-        Hash { val }
-    }
-
     fn bytes(&self) -> Vec<u8> {
         let mut v = Vec::with_capacity(&self.bytes.capacity() + 1);
         v.push(0);
@@ -35,16 +31,11 @@ impl Storable for Blob {
 }
 
 #[derive(Clone)]
-struct Hash {
-    val: [u8; 32],
-}
-
-#[derive(Debug)]
-pub struct HashLengthError(());
+struct Hash([u8; 32]);
 
 impl AsRef<[u8]> for Hash {
     fn as_ref(&self) -> &[u8] {
-        &self.val
+        &self.0
     }
 }
 
@@ -60,8 +51,8 @@ enum ADTItem {
     Product(Vec<ADT>),
 }
 
-static BlobTypeHash: Hash = Hash { val: hex!("00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000") };
-static ADTypeHash:   Hash = Hash { val: hex!("00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001") };
+static BlobTypeHash: Hash = Hash(hex!("00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"));
+static ADTypeHash:   Hash = Hash(hex!("00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001"));
 
 struct Typing {
     // Either this typing represents a type or a value.
