@@ -7,6 +7,14 @@ use sha3::digest::generic_array::GenericArray;
 
 #[macro_use] extern crate hex_literal;
 
+#[derive(Clone,Debug)]
+struct Hash([u8; 32]);
+impl AsRef<[u8]> for Hash {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 trait Storable {
     fn bytes(&self) -> Vec<u8>;
     fn hash(&self) -> Hash {
@@ -24,31 +32,62 @@ struct Blob {
 impl Storable for Blob {
     fn bytes(&self) -> Vec<u8> {
         let mut v = Vec::with_capacity(&self.bytes.capacity() + 1);
+        // Blobs all have a leading 0 byte 
         v.push(0);
         v.extend_from_slice(&self.bytes);
         v
     }
 }
 
-#[derive(Clone)]
-struct Hash([u8; 32]);
-
-impl AsRef<[u8]> for Hash {
-    fn as_ref(&self) -> &[u8] {
-        &self.0
-    }
-}
-
 // Algebraic Data Type
+#[derive(Debug)]
 struct ADT {
     uniqueness: [u8; 16],
     value: ADTItem,
 }
-
+#[derive(Debug)]
 enum ADTItem {
     Hash(Hash),
-    Sum(Vec<ADT>),
-    Product(Vec<ADT>),
+    Sum(Vec<ADTItem>),
+    Product(Vec<ADTItem>),
+}
+impl ADTItem {
+    fn bytes(&self) -> Vec<u8> {
+        let mut result = Vec::new();
+        match self {
+            ADTItem::Hash(h) => {
+                result.push(0);
+                result.extend_from_slice(&h.0[..]);
+                result
+            }
+            ADTItem::Sum(items) => {
+                result.push(1);
+                result.push(items.len() as u8);
+                for item in items {
+                    result.extend_from_slice(&item.bytes());
+                }
+                result
+            }
+            ADTItem::Product(items) => {
+                result.push(2);
+                result.push(items.len() as u8);
+                for item in items {
+                    result.extend_from_slice(&item.bytes());
+                }
+                result
+            }
+        }
+    }
+}
+impl Storable for ADT {
+    fn bytes(&self) -> Vec<u8> {
+        let mut v = Vec::new();
+        // Blobs all have a leading 0 byte 
+        v.push(0);
+        v.extend_from_slice(&self.uniqueness);
+        v.extend_from_slice(&self.value.bytes());
+        v
+    }
 }
 
 static BlobTypeHash: Hash = Hash(hex!("00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"));
