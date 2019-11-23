@@ -19,11 +19,13 @@ impl Blob {
         v
     }
 
-    fn hash(&self) -> GenericArray<u8, <Sha3_256 as Digest>::OutputSize> {
+    fn hash(&self) -> Hash {
+        let mut val: [u8; 32] = Default::default();
         let mut hasher = Sha3_256::new();
         hasher.input(&[0]);
         hasher.input(&self.bytes);
-        return hasher.result()
+        val.copy_from_slice(hasher.result().as_ref());
+        Hash { val }
     }
 }
 
@@ -35,22 +37,46 @@ struct Hash {
 #[derive(Debug)]
 pub struct HashLengthError(());
 
-impl TryFrom<&[u8]> for Hash {
-    type Error = HashLengthError;
-
-    fn try_from(bytes: &[u8]) -> Result<Self, Self::Error> {
-        if let Ok(val) = bytes.try_into() {
-            Ok(Hash { val })
-        } else {
-            Err(HashLengthError(()))
-        }
+impl AsRef<[u8]> for Hash {
+    fn as_ref(&self) -> &[u8] {
+        &self.val
     }
 }
 
+/*
+enum ADT {
+    Hash(Hash),
+    Sum(
+}
+
+struct ADT {
+
+}
+*/
+
+static BlobTypeHash: Hash = Hash { val: hex!("00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000") };
+static ADTypeHash:   Hash = Hash { val: hex!("00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001") };
 
 struct Typing {
+    // Either this typing represents a type or a value.
+    // If it represents a type, then type_hash will a special value
+    // that means type (1 for adts, 2 for custom types, etc)
+    // Otherwise, if it's a value, it will be the hash of a typing
+    // which represents a type.
+    // If this contained the hash of a blob, it would be invalid.
     type_hash: Hash,
+    // the actual data blob
     data_hash: Hash,
+    // 128 bits - like uuids.
+    // This is for types to be more like nominal types and less like
+    // structural types.
+    // Maybe see https://www.unisonweb.org/docs/language-reference/type-declarations#unique-types
+    // Presumably these would be generated randomly to minimize collision with other people's
+    // types. 
+    // I guess a reference to a specific type would basically be this whole struct (for when
+    // exported.. internally it could just be the hash of this item.
+    // But hash of this item only works if you know you have it in the database already.
+    uniqueness: [u8; 16],
 }
 
 
@@ -61,11 +87,9 @@ fn main() {
 
     let b = Blob { bytes: b"abc"[..].into() };
 
-    let h: Hash = b.hash().as_ref().try_into().expect("round trip");
-
     let t = Typing {
-        type_hash: h.clone(),
-        data_hash: h,
+        type_hash: b.hash(),
+        data_hash: b.hash(),
     };
 
     {
