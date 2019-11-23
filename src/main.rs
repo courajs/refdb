@@ -7,18 +7,16 @@ use sha3::digest::generic_array::GenericArray;
 
 #[macro_use] extern crate hex_literal;
 
+trait Storable {
+    fn hash(&self) -> Hash;
+    fn bytes(&self) -> Vec<u8>;
+}
+
 struct Blob {
     bytes: Vec<u8>,
 }
 
-impl Blob {
-    fn serialize(&self) -> Vec<u8> {
-        let mut v = Vec::with_capacity(&self.bytes.capacity() + 1);
-        v.push(0);
-        v.extend_from_slice(&self.bytes);
-        v
-    }
-
+impl Storable for Blob {
     fn hash(&self) -> Hash {
         let mut val: [u8; 32] = Default::default();
         let mut hasher = Sha3_256::new();
@@ -26,6 +24,13 @@ impl Blob {
         hasher.input(&self.bytes);
         val.copy_from_slice(hasher.result().as_ref());
         Hash { val }
+    }
+
+    fn bytes(&self) -> Vec<u8> {
+        let mut v = Vec::with_capacity(&self.bytes.capacity() + 1);
+        v.push(0);
+        v.extend_from_slice(&self.bytes);
+        v
     }
 }
 
@@ -43,16 +48,17 @@ impl AsRef<[u8]> for Hash {
     }
 }
 
-/*
-enum ADT {
-    Hash(Hash),
-    Sum(
-}
-
+// Algebraic Data Type
 struct ADT {
-
+    uniqueness: [u8; 16],
+    value: ADTItem,
 }
-*/
+
+enum ADTItem {
+    Hash(Hash),
+    Sum(Vec<ADT>),
+    Product(Vec<ADT>),
+}
 
 static BlobTypeHash: Hash = Hash { val: hex!("00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000") };
 static ADTypeHash:   Hash = Hash { val: hex!("00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001") };
@@ -76,9 +82,13 @@ struct Typing {
     // I guess a reference to a specific type would basically be this whole struct (for when
     // exported.. internally it could just be the hash of this item.
     // But hash of this item only works if you know you have it in the database already.
-    uniqueness: [u8; 16],
+    // uniqueness: [u8; 16],
 }
 
+
+fn put(store: &SingleStore, writer: &mut rkv::Writer, item: &impl Storable) -> Result<(), rkv::StoreError> {
+    store.put(writer, &item.hash(), &Value::Blob(&item.bytes()))
+}
 
 fn main() {
     let created_arc = Manager::singleton().write().unwrap().get_or_create(Path::new("/Users/aaron/dev/rkv/data"), Rkv::new).unwrap();
@@ -98,7 +108,8 @@ fn main() {
         // a second one will block until the first completes.
         let mut writer = env.write().unwrap();
 
-        store.put(&mut writer, &b.hash(), &Value::Blob(&b.serialize()));
+        put(&store, &mut writer, &b);
+        // store.put(&mut writer, &b.hash(), &Value::Blob(&b.serialize()));
 
         writer.commit().unwrap();
     }
