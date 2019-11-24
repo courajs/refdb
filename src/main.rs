@@ -15,6 +15,26 @@ impl AsRef<[u8]> for Hash {
         &self.0
     }
 }
+struct InvalidHashLengthError(());
+impl TryFrom<&[u8]> for Hash {
+    type Error = InvalidHashLengthError;
+    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+        if value.len() == 32 {
+            let mut val = [0; 32];
+            val.copy_from_slice(value);
+            Ok(Hash(val))
+        } else {
+            Err(InvalidHashLengthError(()))
+        }
+    }
+}
+impl Hash {
+    fn sure_from(value: &[u8]) -> Hash {
+        let mut val = [0; 32];
+        val.copy_from_slice(value);
+        Hash(val)
+    }
+}
 impl fmt::Debug for Hash {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "sha-256:{}", hex::encode(self.0))
@@ -54,6 +74,7 @@ struct ADT {
 
 // blob zero byte + uniqueness + ADTItem tag + a single hash (smallest variant)
 const MIN_ADT_SIZE: usize = 1 + 16 + 1 + 32;
+#[derive(Debug)]
 struct InvalidADTParseError(());
 impl ADT {
     fn decode(bytes: &[u8]) -> Result<ADT, InvalidADTParseError> {
@@ -89,7 +110,18 @@ enum ADTItem {
 }
 impl ADTItem {
     fn decode(bytes: &[u8]) -> Result<(ADTItem,&[u8]), InvalidADTParseError> {
-        Err(InvalidADTParseError(()))
+        if bytes.len() == 0 {
+            return Err(InvalidADTParseError(()))
+        } else if bytes[0] > 2 {
+            return Err(InvalidADTParseError(()))
+        } else if bytes[0] == 0 {
+            if bytes.len() < 33 {
+                return Err(InvalidADTParseError(()))
+            } else {
+                return Ok((ADTItem::Hash(Hash::sure_from(&bytes[1..33])), &bytes[33..]))
+            }
+        }
+        return Err(InvalidADTParseError(()))
     }
     fn bytes(&self) -> Vec<u8> {
         let mut result = Vec::new();
@@ -172,13 +204,20 @@ fn main() {
         data_hash: b.hash(),
     };
 
+    let mut uniq = [0; 16];
+    uniq[0] = 254;
+    uniq[15] = 239;
     let t_blob = ADT {
-        uniqueness: [0; 16],
-        value: ADTItem::Product(vec![
-                    ADTItem::Hash(BlobTypeHash),
-                    ADTItem::Hash(BlobTypeHash)
-        ]),
+        uniqueness: uniq,
+        value: ADTItem::Hash(ADTypeHash),
     };
+    // let t_blob = ADT {
+    //     uniqueness: [0; 16],
+    //     value: ADTItem::Product(vec![
+    //                 ADTItem::Hash(BlobTypeHash),
+    //                 ADTItem::Hash(BlobTypeHash)
+    //     ]),
+    // };
 
     dbg!(&t_blob);
 
@@ -199,7 +238,11 @@ fn main() {
         let reader = env.read().expect("reader");
         if let Ok(Some(Value::Blob(bytes))) = store.get(&reader, &t_blob.hash()) {
             dbg!(bytes.len());
-            dbg!(bytes);
+            // dbg!(bytes);
+            match ADT::decode(bytes) {
+                Ok(adt) => { dbg!(adt); }
+                Err(e) => { dbg!(e); }
+            };
             //println!("Got {}", std::str::from_utf8(bytes).unwrap());
         } else {
             println!("um.");
