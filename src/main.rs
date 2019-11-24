@@ -51,6 +51,30 @@ struct ADT {
     uniqueness: [u8; 16],
     value: ADTItem,
 }
+
+// blob zero byte + uniqueness + ADTItem tag + a single hash (smallest variant)
+const MIN_ADT_SIZE: usize = 1 + 16 + 1 + 32;
+struct InvalidADTParseError(());
+impl ADT {
+    fn decode(bytes: &[u8]) -> Result<ADT, InvalidADTParseError> {
+        if bytes.len() < MIN_ADT_SIZE {
+            Err(InvalidADTParseError(()))
+        } else {
+            let (value,rest) = ADTItem::decode(&bytes[17..])?;
+            if rest.len() == 0 {
+                let mut uniqueness = [0; 16];
+                uniqueness.copy_from_slice(&bytes[1..17]);
+                Ok(ADT {
+                    uniqueness,
+                    value,
+                })
+            } else {
+                Err(InvalidADTParseError(()))
+            }
+        }
+    }
+}
+
 impl fmt::Debug for ADT {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "ADT {{ \n    uniqueness: 0x{},\n    value: {:#?} }}", &hex::encode(self.uniqueness), &self.value)
@@ -64,6 +88,9 @@ enum ADTItem {
     Product(Vec<ADTItem>),
 }
 impl ADTItem {
+    fn decode(bytes: &[u8]) -> Result<(ADTItem,&[u8]), InvalidADTParseError> {
+        Err(InvalidADTParseError(()))
+    }
     fn bytes(&self) -> Vec<u8> {
         let mut result = Vec::new();
         match self {
@@ -73,6 +100,7 @@ impl ADTItem {
                 result
             }
             ADTItem::Sum(items) => {
+                // TODO: maybe sort these somehow for easier structural comparison?
                 result.push(1);
                 result.extend_from_slice(&items.len().to_be_bytes());
                 for item in items {
