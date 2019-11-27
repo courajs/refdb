@@ -206,7 +206,12 @@ fn put(store: &SingleStore, writer: &mut rkv::Writer, item: &impl Storable) -> R
     store.put(writer, &item.hash(), &Value::Blob(&item.bytes()))
 }
 
+use std::env;
+
 fn main() {
+    let args: Vec<String> = env::args().collect();
+    println!("{:?}", args);
+
     let created_arc = Manager::singleton().write().unwrap().get_or_create(Path::new("/Users/aaron/dev/rkv/data"), Rkv::new).unwrap();
     let env = created_arc.read().unwrap();
     let store: SingleStore = env.open_single("mydb", StoreOptions::create()).unwrap();
@@ -228,8 +233,8 @@ fn main() {
     let t_blob = ADT {
         uniqueness: uniq,
         value: ADTItem::Product(vec![
-                    ADTItem::Hash(ADT_TYPE_HASH),
-                    ADTItem::Hash(ADT_TYPE_HASH)
+                    ADTItem::Hash(BLOB_TYPE_HASH),
+                    ADTItem::Hash(BLOB_TYPE_HASH)
         ]),
     };
 
