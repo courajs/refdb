@@ -127,7 +127,7 @@ impl ADTItem {
             } else {
                 return Ok((ADTItem::Hash(Hash::sure_from(&bytes[1..33])), &bytes[33..]))
             }
-        } else if bytes[0] == 1 {
+        } else if bytes[0] == 1 || bytes[0] == 2 {
             if bytes.len() < 9 {
                 return Err(InvalidADTParseError("not long enough for sum"))
             }
@@ -139,7 +139,11 @@ impl ADTItem {
                 v.push(next);
                 rest = more;
             }
-            return Ok((ADTItem::Sum(v),rest))
+            if bytes[0] == 1 {
+                return Ok((ADTItem::Sum(v),rest))
+            } else {
+                return Ok((ADTItem::Product(v),rest))
+            }
         }
         return Err(InvalidADTParseError("unknown item type"))
     }
@@ -223,7 +227,7 @@ fn main() {
     // };
     let t_blob = ADT {
         uniqueness: uniq,
-        value: ADTItem::Sum(vec![
+        value: ADTItem::Product(vec![
                     ADTItem::Hash(ADT_TYPE_HASH),
                     ADTItem::Hash(ADT_TYPE_HASH)
         ]),
