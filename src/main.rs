@@ -1,9 +1,10 @@
 use std::path::Path;
-use std::convert::{TryFrom, TryInto};
+use std::convert::{TryInto};
 use rkv::{Manager, Rkv, SingleStore, Value, StoreOptions};
-use num::{BigUint};
+// use num::{BigUint};
 use sha3::{Digest, Sha3_256};
-use sha3::digest::generic_array::GenericArray;
+// use sha3::digest::generic_array::GenericArray;
+//
 use std::fmt;
 
 #[macro_use] extern crate hex_literal;
@@ -15,19 +16,21 @@ impl AsRef<[u8]> for Hash {
         &self.0
     }
 }
-struct InvalidHashLengthError(());
-impl TryFrom<&[u8]> for Hash {
-    type Error = InvalidHashLengthError;
-    fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-        if value.len() == 32 {
-            let mut val = [0; 32];
-            val.copy_from_slice(value);
-            Ok(Hash(val))
-        } else {
-            Err(InvalidHashLengthError(()))
-        }
-    }
-}
+
+// struct InvalidHashLengthError(());
+// impl TryFrom<&[u8]> for Hash {
+//     type Error = InvalidHashLengthError;
+//     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+//         if value.len() == 32 {
+//             let mut val = [0; 32];
+//             val.copy_from_slice(value);
+//             Ok(Hash(val))
+//         } else {
+//             Err(InvalidHashLengthError(()))
+//         }
+//     }
+// }
+
 impl Hash {
     fn sure_from(value: &[u8]) -> Hash {
         let mut val = [0; 32];
@@ -66,8 +69,11 @@ impl Storable for Blob {
 }
 
 // Algebraic Data Type
-// #[derive(Debug)]
 struct ADT {
+    // This is for types to be more like nominal types and less like
+    // structural types.
+    // Maybe see https://www.unisonweb.org/docs/language-reference/type-declarations#unique-types
+    // Presumably this is generated randomly to minimize collisions with other types.
     uniqueness: [u8; 16],
     value: ADTItem,
 }
@@ -75,11 +81,11 @@ struct ADT {
 // blob zero byte + uniqueness + ADTItem tag + a single hash (smallest variant)
 const MIN_ADT_SIZE: usize = 1 + 16 + 1 + 32;
 #[derive(Debug)]
-struct InvalidADTParseError(());
+struct InvalidADTParseError(&'static str);
 impl ADT {
     fn decode(bytes: &[u8]) -> Result<ADT, InvalidADTParseError> {
         if bytes.len() < MIN_ADT_SIZE {
-            Err(InvalidADTParseError(()))
+            Err(InvalidADTParseError("too short overall"))
         } else {
             let (value,rest) = ADTItem::decode(&bytes[17..])?;
             if rest.len() == 0 {
@@ -90,7 +96,8 @@ impl ADT {
                     value,
                 })
             } else {
-                Err(InvalidADTParseError(()))
+                dbg!(rest);
+                Err(InvalidADTParseError("extra left over"))
             }
         }
     }
@@ -111,17 +118,30 @@ enum ADTItem {
 impl ADTItem {
     fn decode(bytes: &[u8]) -> Result<(ADTItem,&[u8]), InvalidADTParseError> {
         if bytes.len() == 0 {
-            return Err(InvalidADTParseError(()))
+            return Err(InvalidADTParseError("nothing available for item"))
         } else if bytes[0] > 2 {
-            return Err(InvalidADTParseError(()))
+            return Err(InvalidADTParseError("invalid item disambiguation byte"))
         } else if bytes[0] == 0 {
             if bytes.len() < 33 {
-                return Err(InvalidADTParseError(()))
+                return Err(InvalidADTParseError("not long enough for hash"))
             } else {
                 return Ok((ADTItem::Hash(Hash::sure_from(&bytes[1..33])), &bytes[33..]))
             }
+        } else if bytes[0] == 1 {
+            if bytes.len() < 9 {
+                return Err(InvalidADTParseError("not long enough for sum"))
+            }
+            let num = usize::from_be_bytes(bytes[1..9].try_into().unwrap());
+            let mut v = Vec::with_capacity(num);
+            let mut rest = &bytes[9..];
+            for i in 0..num {
+                let (next, more) = ADTItem::decode(rest)?;
+                v.push(next);
+                rest = more;
+            }
+            return Ok((ADTItem::Sum(v),rest))
         }
-        return Err(InvalidADTParseError(()))
+        return Err(InvalidADTParseError("unknown item type"))
     }
     fn bytes(&self) -> Vec<u8> {
         let mut result = Vec::new();
@@ -162,8 +182,8 @@ impl Storable for ADT {
     }
 }
 
-static BlobTypeHash: Hash = Hash(hex!("00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"));
-static ADTypeHash:   Hash = Hash(hex!("00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001"));
+static BLOB_TYPE_HASH: Hash = Hash(hex!("00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"));
+static ADT_TYPE_HASH:   Hash = Hash(hex!("00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001"));
 
 struct Typing {
     // Either this typing represents a type or a value.
@@ -175,16 +195,6 @@ struct Typing {
     type_hash: Hash,
     // the actual data blob
     data_hash: Hash,
-    // 128 bits - like uuids.
-    // This is for types to be more like nominal types and less like
-    // structural types.
-    // Maybe see https://www.unisonweb.org/docs/language-reference/type-declarations#unique-types
-    // Presumably these would be generated randomly to minimize collision with other people's
-    // types. 
-    // I guess a reference to a specific type would basically be this whole struct (for when
-    // exported.. internally it could just be the hash of this item.
-    // But hash of this item only works if you know you have it in the database already.
-    // uniqueness: [u8; 16],
 }
 
 
@@ -207,17 +217,17 @@ fn main() {
     let mut uniq = [0; 16];
     uniq[0] = 254;
     uniq[15] = 239;
+    // let t_blob = ADT {
+    //     uniqueness: uniq,
+    //     value: ADTItem::Hash(ADT_TYPE_HASH),
+    // };
     let t_blob = ADT {
         uniqueness: uniq,
-        value: ADTItem::Hash(ADTypeHash),
+        value: ADTItem::Sum(vec![
+                    ADTItem::Hash(ADT_TYPE_HASH),
+                    ADTItem::Hash(ADT_TYPE_HASH)
+        ]),
     };
-    // let t_blob = ADT {
-    //     uniqueness: [0; 16],
-    //     value: ADTItem::Product(vec![
-    //                 ADTItem::Hash(BlobTypeHash),
-    //                 ADTItem::Hash(BlobTypeHash)
-    //     ]),
-    // };
 
     dbg!(&t_blob);
 
