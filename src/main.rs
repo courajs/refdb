@@ -208,24 +208,24 @@ mod RKVStorage {
     use rkv::{Manager, Rkv, SingleStore, Value, StoreOptions};
     use crate::storage::{Hash,Storable};
 
-    pub struct Db {
-        pub env: rkv::Rkv,
+    pub struct Db<'a> {
+        pub env: std::sync::RwLockReadGuard<'a, rkv::Rkv>,
         pub store: rkv::SingleStore,
     }
 
-    impl Db {
-        pub fn new() -> Db {
+    impl Db<'static> {
+        pub fn new() -> Db<'static> {
             let created_arc = Manager::singleton().write().unwrap().get_or_create(Path::new("/Users/aaron/dev/rkv/data"), Rkv::new).unwrap();
             let env = created_arc.read().unwrap();
             let store: SingleStore = env.open_single("mydb", StoreOptions::create()).unwrap();
             Db { env, store }
         }
 
-        pub fn put(&self, item: impl Storable) -> Result<(), rkv::StoreError> {
+        pub fn put(&self, item: & impl Storable) -> Result<(), rkv::StoreError> {
             // FIXME - handle errors properly here
-            let mut writer = self.env.unwrap();
-            self.store.put(writer, &item.hash(), &Value::Blob(&item.bytes()));
-            writer.commit().unwrap()
+            let mut writer = self.env.write().unwrap();
+            self.store.put(&mut writer, &item.hash(), &Value::Blob(&item.bytes()));
+            writer.commit()
         }
 
         pub fn get(&self, hash: Hash) -> Result<Option<&[u8]>, rkv::error::StoreError> {
@@ -248,6 +248,7 @@ mod RKVStorage {
     }
 }
 
+use crate::storage::Storable;
 
 fn main() {
     // let args: Vec<String> = env::args().collect();
@@ -293,7 +294,7 @@ fn main() {
 
     }
 
-    match db.get(&b.hash()) {
+    match db.get(b.hash()) {
         Ok(Some(bytes)) => {
             dbg!(bytes.len());
             // dbg!(bytes);
