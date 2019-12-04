@@ -3,14 +3,15 @@
 // use sha3::digest::generic_array::GenericArray;
 
 // use hex_literal::hex;
-#[macro_use] extern crate hex_literal;
+// #[macro_use]
+// extern crate hex_literal;
 
 // Basic persistence primitives
 mod storage {
+    use sha3::{Digest, Sha3_256};
     use std::fmt;
-    use sha3::{Digest,Sha3_256};
 
-    #[derive(Copy,Clone)]
+    #[derive(Copy, Clone)]
     pub struct Hash(pub [u8; 32]);
     impl AsRef<[u8]> for Hash {
         fn as_ref(&self) -> &[u8] {
@@ -32,7 +33,6 @@ mod storage {
         }
     }
 
-
     pub trait Storable {
         fn bytes(&self) -> Vec<u8>;
         fn hash(&self) -> Hash {
@@ -44,7 +44,6 @@ mod storage {
         }
     }
 
-
     pub struct Blob {
         pub bytes: Vec<u8>,
     }
@@ -52,7 +51,7 @@ mod storage {
     impl Storable for Blob {
         fn bytes(&self) -> Vec<u8> {
             let mut v = Vec::with_capacity(&self.bytes.capacity() + 1);
-            // Blobs all have a leading 0 byte 
+            // Blobs all have a leading 0 byte
             v.push(0);
             v.extend_from_slice(&self.bytes);
             v
@@ -60,11 +59,11 @@ mod storage {
     }
 }
 
-
 mod typings {
-    use std::fmt;
-    use crate::storage::{Hash,Storable};
+    use crate::storage::{Hash, Storable};
     use std::convert::TryInto;
+    use std::fmt;
+    use hex_literal::hex;
 
     // Algebraic Data Type
     pub struct ADT {
@@ -85,14 +84,11 @@ mod typings {
             if bytes.len() < MIN_ADT_SIZE {
                 Err(InvalidADTParseError("too short overall"))
             } else {
-                let (value,rest) = ADTItem::decode(&bytes[17..])?;
+                let (value, rest) = ADTItem::decode(&bytes[17..])?;
                 if rest.len() == 0 {
                     let mut uniqueness = [0; 16];
                     uniqueness.copy_from_slice(&bytes[1..17]);
-                    Ok(ADT {
-                        uniqueness,
-                        value,
-                    })
+                    Ok(ADT { uniqueness, value })
                 } else {
                     dbg!(rest);
                     Err(InvalidADTParseError("extra left over"))
@@ -103,7 +99,12 @@ mod typings {
 
     impl fmt::Debug for ADT {
         fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-            write!(f, "ADT {{ \n    uniqueness: 0x{},\n    value: {:#?} }}", &hex::encode(self.uniqueness), &self.value)
+            write!(
+                f,
+                "ADT {{ \n    uniqueness: 0x{},\n    value: {:#?} }}",
+                &hex::encode(self.uniqueness),
+                &self.value
+            )
         }
     }
 
@@ -114,20 +115,20 @@ mod typings {
         Product(Vec<ADTItem>),
     }
     impl ADTItem {
-        fn decode(bytes: &[u8]) -> Result<(ADTItem,&[u8]), InvalidADTParseError> {
+        fn decode(bytes: &[u8]) -> Result<(ADTItem, &[u8]), InvalidADTParseError> {
             if bytes.len() == 0 {
-                return Err(InvalidADTParseError("nothing available for item"))
+                return Err(InvalidADTParseError("nothing available for item"));
             } else if bytes[0] > 2 {
-                return Err(InvalidADTParseError("invalid item disambiguation byte"))
+                return Err(InvalidADTParseError("invalid item disambiguation byte"));
             } else if bytes[0] == 0 {
                 if bytes.len() < 33 {
-                    return Err(InvalidADTParseError("not long enough for hash"))
+                    return Err(InvalidADTParseError("not long enough for hash"));
                 } else {
-                    return Ok((ADTItem::Hash(Hash::sure_from(&bytes[1..33])), &bytes[33..]))
+                    return Ok((ADTItem::Hash(Hash::sure_from(&bytes[1..33])), &bytes[33..]));
                 }
             } else if bytes[0] == 1 || bytes[0] == 2 {
                 if bytes.len() < 9 {
-                    return Err(InvalidADTParseError("not long enough for sum"))
+                    return Err(InvalidADTParseError("not long enough for sum"));
                 }
                 let num = usize::from_be_bytes(bytes[1..9].try_into().unwrap());
                 let mut v = Vec::with_capacity(num);
@@ -138,12 +139,12 @@ mod typings {
                     rest = more;
                 }
                 if bytes[0] == 1 {
-                    return Ok((ADTItem::Sum(v),rest))
+                    return Ok((ADTItem::Sum(v), rest));
                 } else {
-                    return Ok((ADTItem::Product(v),rest))
+                    return Ok((ADTItem::Product(v), rest));
                 }
             }
-            return Err(InvalidADTParseError("unknown item type"))
+            return Err(InvalidADTParseError("unknown item type"));
         }
         fn bytes(&self) -> Vec<u8> {
             let mut result = Vec::new();
@@ -176,7 +177,7 @@ mod typings {
     impl Storable for ADT {
         fn bytes(&self) -> Vec<u8> {
             let mut v = Vec::new();
-            // Blobs all have a leading 0 byte 
+            // Blobs all have a leading 0 byte
             v.push(0);
             v.extend_from_slice(&self.uniqueness);
             v.extend_from_slice(&self.value.bytes());
@@ -184,8 +185,12 @@ mod typings {
         }
     }
 
-    pub static BLOB_TYPE_HASH: Hash = Hash(hex!("00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"));
-    pub static ADT_TYPE_HASH:   Hash = Hash(hex!("00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001"));
+    pub static BLOB_TYPE_HASH: Hash = Hash(hex!(
+        "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"
+    ));
+    pub static ADT_TYPE_HASH: Hash = Hash(hex!(
+        "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001"
+    ));
 
     pub struct Typing {
         // Either this typing represents a type or a value.
@@ -198,21 +203,37 @@ mod typings {
         // the actual data blob
         pub data_hash: Hash,
     }
-
 }
 
-
-
-mod RKVStorage {
-    use std::path::Path;
-    use std::sync::{Arc,RwLock};
-    use rkv::{Manager, Rkv, SingleStore, Value, StoreOptions};
-    use crate::storage::{Hash,Storable};
+mod rkvstorage {
+    use crate::storage::{Hash, Storable};
+    use rkv::Value;
+    use std::convert::From;
+    use std::error::Error;
+    use std::fmt::{Display,Debug};
 
     pub struct Db<'a> {
         pub env: &'a rkv::Rkv,
         pub store: &'a rkv::SingleStore,
     }
+
+    struct DbError(rkv::error::StoreError);
+    impl From<rkv::error::StoreError> for DbError {
+        fn from(e: rkv::error::StoreError) -> Self {
+            DbError(e)
+        }
+    }
+    impl Display for DbError {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+            <rkv::error::StoreError as Display>::fmt(&self.0, formatter)
+        }
+    }
+    impl Debug for DbError {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+            <rkv::error::StoreError as Debug>::fmt(&self.0, formatter)
+        }
+    }
+    impl Error for DbError { }
 
     impl<'a> Db<'a> {
         // pub fn new() -> Db {
@@ -222,27 +243,27 @@ mod RKVStorage {
         //     Db { arc, store }
         // }
 
-        pub fn put(&self, item: & impl Storable) -> Result<(), rkv::StoreError> {
+        pub fn put(&self, item: &impl Storable) -> Result<(), impl Error> {
             // FIXME - handle errors properly here
             let mut writer = self.env.write().unwrap();
-            self.store.put(&mut writer, &item.hash(), &Value::Blob(&item.bytes()));
-            writer.commit()
+            self.store
+                .put(&mut writer, &item.hash(), &Value::Blob(&item.bytes()))?;
+            writer.commit()?;
+            Ok(()) as Result<(), DbError>
         }
 
-        pub fn get(&self, hash: Hash) -> Result<Option<Vec<u8>>, rkv::error::StoreError> {
+        pub fn get(&self, hash: Hash) -> Result<Option<Vec<u8>>, impl Error> {
             let reader = self.env.read().expect("reader");
             let r = self.store.get(&reader, &hash)?;
             match r {
-                Some(Value::Blob(bytes)) => {
-                    Ok(Some(bytes.into()))
-                },
+                Some(Value::Blob(bytes)) => Ok(Some(bytes.into())),
                 Some(_) => {
                     println!("Non-blob retrieved from store...");
                     Ok(None)
-                },
+                }
                 None => {
                     println!("Entry missing from store...");
-                    Ok(None)
+                    Ok(None) as Result<Option<Vec<u8>>, DbError>
                 }
             }
         }
@@ -250,21 +271,36 @@ mod RKVStorage {
 }
 
 use crate::storage::Storable;
-use rkv::{Rkv, Manager, SingleStore, StoreOptions};
+use rkv::{Manager, Rkv, SingleStore, StoreOptions};
+use rkv::error::StoreError;
 use std::path::Path;
+use std::error::Error;
+use std::fmt::{Debug,Display};
 
-fn main() {
+trait MyError: Debug + Display {}
+impl Error for MyError {}
+impl MyError for StoreError {}
+
+fn main() -> Result<(), Box<dyn Error>>{
     // let args: Vec<String> = env::args().collect();
     // println!("{:?}", args);
 
-    let arc = Manager::singleton().write().unwrap().get_or_create(Path::new("/Users/aaron/dev/rkv/data"), Rkv::new).unwrap();
+    let arc = Manager::singleton()
+        .write()
+        .unwrap()
+        .get_or_create(Path::new("/Users/aaron/dev/rkv/data"), Rkv::new)
+        .unwrap();
     let env = arc.read().unwrap();
     let store: SingleStore = env.open_single("mydb", StoreOptions::create()).unwrap();
 
+    let db = rkvstorage::Db {
+        env: &env,
+        store: &store,
+    };
 
-    let db = RKVStorage::Db { env: &env, store: &store };
-
-    let b = storage::Blob { bytes: b"abc"[..].into() };
+    let b = storage::Blob {
+        bytes: b"abc"[..].into(),
+    };
 
     // let t = Typing {
     //     type_hash: b.hash(),
@@ -288,18 +324,18 @@ fn main() {
 
     // dbg!(&t_blob);
 
+
     {
         // Use a write transaction to mutate the store via a `Writer`.
         // There can be only one writer for a given environment, so opening
         // a second one will block until the first completes.
         // let mut writer = env.write().unwrap();
 
-        db.put(&b);
+        db.put(&b)?;
         // db.put(&t_blob);
         // put(&store, &mut writer, &b);
         // put(&store, &mut writer, &t_blob);
         // store.put(&mut writer, &b.hash(), &Value::Blob(&b.serialize()));
-
     }
 
     match db.get(b.hash()) {
@@ -310,14 +346,16 @@ fn main() {
             //     Ok(adt) => { dbg!(adt); }
             //     Err(e) => { dbg!(e); }
             // };
-        },
+        }
         Ok(None) => {
             println!("Attempted to fetch something not in store");
-        },
+        }
         Err(e) => {
             println!("Error fetching from db, {}", e);
         }
     }
+
+    Ok(())
 }
 
 /*
@@ -332,17 +370,16 @@ impl BigValue {
 }
 */
 
-
-    // struct InvalidHashLengthError(());
-    // impl TryFrom<&[u8]> for Hash {
-    //     type Error = InvalidHashLengthError;
-    //     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-    //         if value.len() == 32 {
-    //             let mut val = [0; 32];
-    //             val.copy_from_slice(value);
-    //             Ok(Hash(val))
-    //         } else {
-    //             Err(InvalidHashLengthError(()))
-    //         }
-    //     }
-    // }
+// struct InvalidHashLengthError(());
+// impl TryFrom<&[u8]> for Hash {
+//     type Error = InvalidHashLengthError;
+//     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
+//         if value.len() == 32 {
+//             let mut val = [0; 32];
+//             val.copy_from_slice(value);
+//             Ok(Hash(val))
+//         } else {
+//             Err(InvalidHashLengthError(()))
+//         }
+//     }
+// }
