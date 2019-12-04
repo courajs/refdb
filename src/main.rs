@@ -132,7 +132,7 @@ mod typings {
                 let num = usize::from_be_bytes(bytes[1..9].try_into().unwrap());
                 let mut v = Vec::with_capacity(num);
                 let mut rest = &bytes[9..];
-                for i in 0..num {
+                for _ in 0..num {
                     let (next, more) = ADTItem::decode(rest)?;
                     v.push(next);
                     rest = more;
@@ -205,21 +205,22 @@ mod typings {
 
 mod RKVStorage {
     use std::path::Path;
+    use std::sync::{Arc,RwLock};
     use rkv::{Manager, Rkv, SingleStore, Value, StoreOptions};
     use crate::storage::{Hash,Storable};
 
     pub struct Db<'a> {
-        pub env: std::sync::RwLockReadGuard<'a, rkv::Rkv>,
-        pub store: rkv::SingleStore,
+        pub env: &'a rkv::Rkv,
+        pub store: &'a rkv::SingleStore,
     }
 
-    impl Db<'static> {
-        pub fn new() -> Db<'static> {
-            let created_arc = Manager::singleton().write().unwrap().get_or_create(Path::new("/Users/aaron/dev/rkv/data"), Rkv::new).unwrap();
-            let env = created_arc.read().unwrap();
-            let store: SingleStore = env.open_single("mydb", StoreOptions::create()).unwrap();
-            Db { env, store }
-        }
+    impl<'a> Db<'a> {
+        // pub fn new() -> Db {
+        //     let arc = Manager::singleton().write().unwrap().get_or_create(Path::new("/Users/aaron/dev/rkv/data"), Rkv::new).unwrap();
+        //     let env = arc.read().unwrap();
+        //     let store: SingleStore = env.open_single("mydb", StoreOptions::create()).unwrap();
+        //     Db { arc, store }
+        // }
 
         pub fn put(&self, item: & impl Storable) -> Result<(), rkv::StoreError> {
             // FIXME - handle errors properly here
@@ -228,12 +229,12 @@ mod RKVStorage {
             writer.commit()
         }
 
-        pub fn get(&self, hash: Hash) -> Result<Option<&[u8]>, rkv::error::StoreError> {
+        pub fn get(&self, hash: Hash) -> Result<Option<Vec<u8>>, rkv::error::StoreError> {
             let reader = self.env.read().expect("reader");
             let r = self.store.get(&reader, &hash)?;
             match r {
                 Some(Value::Blob(bytes)) => {
-                    Ok(Some(bytes))
+                    Ok(Some(bytes.into()))
                 },
                 Some(_) => {
                     println!("Non-blob retrieved from store...");
@@ -249,12 +250,19 @@ mod RKVStorage {
 }
 
 use crate::storage::Storable;
+use rkv::{Rkv, Manager, SingleStore, StoreOptions};
+use std::path::Path;
 
 fn main() {
     // let args: Vec<String> = env::args().collect();
     // println!("{:?}", args);
 
-    let db = RKVStorage::Db::new();
+    let arc = Manager::singleton().write().unwrap().get_or_create(Path::new("/Users/aaron/dev/rkv/data"), Rkv::new).unwrap();
+    let env = arc.read().unwrap();
+    let store: SingleStore = env.open_single("mydb", StoreOptions::create()).unwrap();
+
+
+    let db = RKVStorage::Db { env: &env, store: &store };
 
     let b = storage::Blob { bytes: b"abc"[..].into() };
 
