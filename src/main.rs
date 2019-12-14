@@ -192,6 +192,7 @@ mod typings {
         "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001"
     ));
 
+    #[derive(Debug)]
     pub struct Typing {
         // Either this typing represents a type or a value.
         // If it represents a type, then type_hash will a special value
@@ -212,6 +213,28 @@ mod typings {
             v.extend_from_slice(&self.type_hash.0[..]);
             v.extend_from_slice(&self.data_hash.0[..]);
             v
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct InvalidTypingParseError(pub &'static str);
+    // leading 1 to indicate a typing, then two hashes
+    const TYPING_SIZE: usize = 1 + 32 + 32;
+    impl Typing {
+        pub fn decode(bytes: &[u8]) -> Result<Typing, InvalidTypingParseError> {
+            if bytes.len() != 65 {
+                return Err(InvalidTypingParseError("Wrong length for a typing object"));
+            }
+            if bytes[0] == 0 {
+                return Err(InvalidTypingParseError("This is a blob, not a typing!"));
+            }
+            if bytes[0] != 1 {
+                return Err(InvalidTypingParseError("This isn't a typing!"));
+            }
+            Ok(Typing {
+                type_hash: Hash::sure_from(&bytes[1..33]),
+                data_hash: Hash::sure_from(&bytes[33..65]),
+            })
         }
     }
 }
@@ -375,6 +398,13 @@ fn main() -> Result<(), Box<dyn Error>>{
     match db.get(t.hash()) {
         Ok(Some(bytes)) => {
             dbg!(bytes.len());
+            match typings::Typing::decode(&bytes) {
+                Err(e) => println!("{:?}", e),
+                Ok(t) => {
+                    println!("typing: {:?}", t);
+                    println!("b hash: {:?}", b.hash())
+                }
+            }
         }
         Ok(None) => println!("Attempted to fetch something not in store"),
         Err(e) => println!("Error fetching from db, {}", e),
