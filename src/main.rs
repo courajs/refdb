@@ -203,6 +203,17 @@ mod typings {
         // the actual data blob
         pub data_hash: Hash,
     }
+
+    impl Storable for Typing {
+        fn bytes(&self) -> Vec<u8> {
+            let mut v = Vec::new();
+            // Typings all have a leading 1 byte
+            v.push(1);
+            v.extend_from_slice(&self.type_hash.0[..]);
+            v.extend_from_slice(&self.data_hash.0[..]);
+            v
+        }
+    }
 }
 
 mod rkvstorage {
