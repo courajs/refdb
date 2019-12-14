@@ -237,6 +237,81 @@ mod typings {
             })
         }
     }
+
+    pub enum ADTValue {
+        Hash(Hash),
+        Sum {
+            kind: u8,
+            value: Box<ADTValue>,
+        },
+        Product(Vec<ADTValue>),
+    }
+
+
+    #[derive(Debug)]
+    pub struct ExpectedTyping {
+        reference: Hash,
+        kind: Hash,
+    }
+
+    #[derive(Debug)]
+    pub struct MaybeValid {
+        typing: Typing,
+        prereqs: Vec<ExpectedTyping>,
+    }
+
+    #[derive(Debug)]
+    pub struct InvalidCustomTypingError(pub &'static str);
+    pub fn validate_adt_instance_bytes(t: &ADTItem, bytes: &[u8]) -> Result<Vec<ExpectedTyping>, InvalidCustomTypingError> {
+        Err(InvalidCustomTypingError("unimplemented"))
+    }
+
+    fn validate_adt_instance(t: &ADTItem, value: &ADTValue) -> Result<Vec<ExpectedTyping>, InvalidCustomTypingError> {
+        match t {
+            ADTItem::Hash(t) => {
+                match value {
+                    ADTValue::Sum {..} => Err(InvalidCustomTypingError("Expected Hash, found Sum")),
+                    ADTValue::Product(_) => Err(InvalidCustomTypingError("Expected Hash, found Product")),
+                    ADTValue::Hash(v) => Ok(vec![ExpectedTyping {
+                        reference: *v,
+                        kind: *t,
+                    }]),
+                }
+            }
+            ADTItem::Sum(subs) => {
+                match value {
+                    ADTValue::Hash(_) => Err(InvalidCustomTypingError("Expected Sum, found Hash")),
+                    ADTValue::Product(_) => Err(InvalidCustomTypingError("Expected Sum, found Product")),
+                    ADTValue::Sum { kind, value: v } => {
+                        if *kind as usize >= subs.len() {
+                            Err(InvalidCustomTypingError("Sum variant tag out of range"))
+                        } else {
+                            validate_adt_instance(&subs[*kind as usize], v)
+                        }
+                    },
+                }
+            }
+            ADTItem::Product(field_types) => {
+                match value {
+                    ADTValue::Hash(_) => Err(InvalidCustomTypingError("Expected Hash, found Product")),
+                    ADTValue::Sum {..} => Err(InvalidCustomTypingError("Expected Sum, found Product")),
+                    ADTValue::Product(field_values) => {
+                        if field_types.len() != field_values.len() {
+                            Err(InvalidCustomTypingError("Wrong number of product field values"))
+                        } else {
+                            let num = field_types.len();
+                            let mut hashes: Vec<ExpectedTyping> = Vec::with_capacity(num);
+                            for i in 0..num {
+                                let mut maybes = validate_adt_instance(&field_types[i], &field_values[i])?;
+                                hashes.append(&mut maybes);
+                            }
+                            Ok(hashes)
+                        }
+                    },
+                }
+            }
+        }
+    }
 }
 
 mod rkvstorage {
