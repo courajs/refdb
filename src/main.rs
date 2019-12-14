@@ -313,6 +313,11 @@ fn main() -> Result<(), Box<dyn Error>>{
         bytes: b"abc"[..].into(),
     };
 
+    let t = typings::Typing {
+        type_hash: typings::BLOB_TYPE_HASH,
+        data_hash: b.hash(),
+    };
+
     // let t = Typing {
     //     type_hash: b.hash(),
     //     data_hash: b.hash(),
@@ -343,6 +348,7 @@ fn main() -> Result<(), Box<dyn Error>>{
         // let mut writer = env.write().unwrap();
 
         db.put(&b)?;
+        db.put(&t)?;
         // db.put(&t_blob);
         // put(&store, &mut writer, &b);
         // put(&store, &mut writer, &t_blob);
@@ -364,6 +370,14 @@ fn main() -> Result<(), Box<dyn Error>>{
         Err(e) => {
             println!("Error fetching from db, {}", e);
         }
+    }
+
+    match db.get(t.hash()) {
+        Ok(Some(bytes)) => {
+            dbg!(bytes.len());
+        }
+        Ok(None) => println!("Attempted to fetch something not in store"),
+        Err(e) => println!("Error fetching from db, {}", e),
     }
 
     Ok(())
