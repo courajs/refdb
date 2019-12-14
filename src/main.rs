@@ -316,6 +316,7 @@ impl Error for MyError {}
 impl MyError for StoreError {}
 
 fn main() -> Result<(), Box<dyn Error>>{
+    use typings::{ADT, ADTItem, Typing, BLOB_TYPE_HASH, ADT_TYPE_HASH};
     // let args: Vec<String> = env::args().collect();
     // println!("{:?}", args);
 
@@ -336,30 +337,30 @@ fn main() -> Result<(), Box<dyn Error>>{
         bytes: b"abc"[..].into(),
     };
 
-    let t = typings::Typing {
-        type_hash: typings::BLOB_TYPE_HASH,
+    let t = Typing {
+        type_hash: BLOB_TYPE_HASH,
         data_hash: b.hash(),
     };
 
-    // let t = Typing {
-    //     type_hash: b.hash(),
-    //     data_hash: b.hash(),
-    // };
-
-    // let mut uniq = [0; 16];
-    // uniq[0] = 254;
-    // uniq[15] = 239;
+    let mut uniq = [0; 16];
+    uniq[0] = 254;
+    uniq[15] = 239;
     // let t_blob = ADT {
     //     uniqueness: uniq,
     //     value: ADTItem::Hash(ADT_TYPE_HASH),
     // };
-    // let t_blob = ADT {
-    //     uniqueness: uniq,
-    //     value: ADTItem::Product(vec![
-    //                 ADTItem::Hash(BLOB_TYPE_HASH),
-    //                 ADTItem::Hash(BLOB_TYPE_HASH)
-    //     ]),
-    // };
+    let double_ref_type = ADT {
+        uniqueness: uniq,
+        value: ADTItem::Product(vec![
+                    ADTItem::Hash(BLOB_TYPE_HASH),
+                    ADTItem::Hash(BLOB_TYPE_HASH)
+        ]),
+    };
+
+    let double_ref_typing = Typing {
+        type_hash: ADT_TYPE_HASH,
+        data_hash: double_ref_type.hash(),
+    };
 
     // dbg!(&t_blob);
 
@@ -372,7 +373,10 @@ fn main() -> Result<(), Box<dyn Error>>{
 
         db.put(&b)?;
         db.put(&t)?;
-        // db.put(&t_blob);
+
+        db.put(&double_ref_type)?;
+        db.put(&double_ref_typing)?;
+        // db.put(&tblob);
         // put(&store, &mut writer, &b);
         // put(&store, &mut writer, &t_blob);
         // store.put(&mut writer, &b.hash(), &Value::Blob(&b.serialize()));
@@ -398,7 +402,7 @@ fn main() -> Result<(), Box<dyn Error>>{
     match db.get(t.hash()) {
         Ok(Some(bytes)) => {
             dbg!(bytes.len());
-            match typings::Typing::decode(&bytes) {
+            match Typing::decode(&bytes) {
                 Err(e) => println!("{:?}", e),
                 Ok(t) => {
                     println!("typing: {:?}", t);
