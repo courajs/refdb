@@ -247,6 +247,37 @@ mod typings {
         Product(Vec<ADTValue>),
     }
 
+    impl ADTValue {
+        fn just_bytes(&self, v: &mut Vec<u8>) {
+            match self {
+                ADTValue::Hash(h) => {
+                    v.extend_from_slice(&h.0[..])
+                },
+                ADTValue::Sum {
+                    kind, value
+                } => {
+                    v.push(*kind);
+                    value.just_bytes(v);
+                },
+                ADTValue::Product(subs) => {
+                    for sub in subs {
+                        sub.just_bytes(v);
+                    }
+                }
+            }
+        }
+    }
+
+    impl Storable for ADTValue {
+        fn bytes(&self) -> Vec<u8> {
+            let mut result = Vec::new();
+            // Blob byte
+            result.push(0);
+            self.just_bytes(&mut result);
+            result
+        }
+    }
+
 
     #[derive(Debug)]
     pub struct ExpectedTyping {
@@ -266,7 +297,17 @@ mod typings {
         Err(InvalidCustomTypingError("unimplemented"))
     }
 
-    fn validate_adt_instance(t: &ADTItem, value: &ADTValue) -> Result<Vec<ExpectedTyping>, InvalidCustomTypingError> {
+    fn validate_adt_instance(t: &ADT, value: &ADTValue) -> Result<MaybeValid, InvalidCustomTypingError> {
+        Ok(MaybeValid {
+            typing: Typing {
+                type_hash: t.hash(),
+                data_hash: value.hash(),
+            },
+            prereqs: inner_validate_adt_instance(&t.value, value)?
+        })
+    }
+
+    fn inner_validate_adt_instance(t: &ADTItem, value: &ADTValue) -> Result<Vec<ExpectedTyping>, InvalidCustomTypingError> {
         match t {
             ADTItem::Hash(t) => {
                 match value {
@@ -286,7 +327,7 @@ mod typings {
                         if *kind as usize >= subs.len() {
                             Err(InvalidCustomTypingError("Sum variant tag out of range"))
                         } else {
-                            validate_adt_instance(&subs[*kind as usize], v)
+                            inner_validate_adt_instance(&subs[*kind as usize], v)
                         }
                     },
                 }
@@ -302,7 +343,7 @@ mod typings {
                             let num = field_types.len();
                             let mut hashes: Vec<ExpectedTyping> = Vec::with_capacity(num);
                             for i in 0..num {
-                                let mut maybes = validate_adt_instance(&field_types[i], &field_values[i])?;
+                                let mut maybes = inner_validate_adt_instance(&field_types[i], &field_values[i])?;
                                 hashes.append(&mut maybes);
                             }
                             Ok(hashes)
