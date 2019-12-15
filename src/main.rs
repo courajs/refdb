@@ -297,7 +297,7 @@ mod typings {
         Err(InvalidCustomTypingError("unimplemented"))
     }
 
-    fn validate_adt_instance(t: &ADT, value: &ADTValue) -> Result<MaybeValid, InvalidCustomTypingError> {
+    pub fn validate_adt_instance(t: &ADT, value: &ADTValue) -> Result<MaybeValid, InvalidCustomTypingError> {
         Ok(MaybeValid {
             typing: Typing {
                 type_hash: t.hash(),
@@ -432,7 +432,7 @@ impl Error for MyError {}
 impl MyError for StoreError {}
 
 fn main() -> Result<(), Box<dyn Error>>{
-    use typings::{ADT, ADTItem, Typing, BLOB_TYPE_HASH, ADT_TYPE_HASH};
+    use typings::{ADT, ADTItem, ADTValue, Typing, BLOB_TYPE_HASH, ADT_TYPE_HASH};
     // let args: Vec<String> = env::args().collect();
     // println!("{:?}", args);
 
@@ -449,13 +449,20 @@ fn main() -> Result<(), Box<dyn Error>>{
         store: &store,
     };
 
-    let b = storage::Blob {
+    let blob1 = storage::Blob {
         bytes: b"abc"[..].into(),
     };
+    let blob2 = storage::Blob {
+        bytes: b"xyz"[..].into(),
+    };
 
-    let t = Typing {
+    let t1 = Typing {
         type_hash: BLOB_TYPE_HASH,
-        data_hash: b.hash(),
+        data_hash: blob1.hash(),
+    };
+    let t2 = Typing {
+        type_hash: BLOB_TYPE_HASH,
+        data_hash: blob2.hash(),
     };
 
     let mut uniq = [0; 16];
@@ -477,6 +484,19 @@ fn main() -> Result<(), Box<dyn Error>>{
         type_hash: ADT_TYPE_HASH,
         data_hash: double_ref_type.hash(),
     };
+
+    let double_instance = ADTValue::Product(
+        vec![ADTValue::Hash(t1.hash()), ADTValue::Hash(t2.hash())],
+    );
+    
+    match typings::validate_adt_instance(&double_ref_type, &double_instance) {
+        Err(e) => println!("validation error: {:?}", e),
+        Ok(maybe) => {
+            println!("maybe: {:?}", maybe);
+        },
+    }
+
+    /*
 
     // dbg!(&t_blob);
 
@@ -529,6 +549,7 @@ fn main() -> Result<(), Box<dyn Error>>{
         Ok(None) => println!("Attempted to fetch something not in store"),
         Err(e) => println!("Error fetching from db, {}", e),
     }
+    */
 
     Ok(())
 }
