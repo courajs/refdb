@@ -281,14 +281,14 @@ mod typings {
 
     #[derive(Debug)]
     pub struct ExpectedTyping {
-        reference: Hash,
-        kind: Hash,
+        pub reference: Hash,
+        pub kind: Hash,
     }
 
     #[derive(Debug)]
     pub struct MaybeValid {
-        typing: Typing,
-        prereqs: Vec<ExpectedTyping>,
+        pub typing: Typing,
+        pub prereqs: Vec<ExpectedTyping>,
     }
 
     #[derive(Debug)]
@@ -420,16 +420,58 @@ mod rkvstorage {
     }
 }
 
-use crate::storage::Storable;
 use rkv::{Manager, Rkv, SingleStore, StoreOptions};
 use rkv::error::StoreError;
 use std::path::Path;
 use std::error::Error;
 use std::fmt::{Debug,Display};
+use crate::storage::Storable;
+use crate::typings::{ADT, ADTValue, Typing};
+use crate::rkvstorage::Db;
 
 trait MyError: Debug + Display {}
 impl Error for MyError {}
 impl MyError for StoreError {}
+
+fn confirm_typing_legit(db: &rkvstorage::Db, kind: &ADT, value: &ADTValue) ->
+    Result<Typing, &'static str>
+{
+    match typings::validate_adt_instance(kind, value) {
+        Ok(maybe) => {
+            for expected in maybe.prereqs {
+                match db.get(expected.reference) {
+                    Err(_) => {
+                        return Err("error getting for sub-field")
+                    },
+                    Ok(None) => {
+                        return Err("sub-field referencing non-existant value")
+                    },
+                    Ok(Some(bytes)) => {
+                        match Typing::decode(&bytes[..]) {
+                            Err(e) => return Err(e.0),
+                            Ok(typing) => {
+                                if typing.type_hash.0 != expected.kind.0 {
+                                    return Err("typing of wrong type as sub-field");
+                                }
+                            },
+                        }
+                    }
+                }
+            }
+            return Ok(maybe.typing)
+        },
+        Err(e) => Err("Failed basic validation"),
+    }
+
+        /*
+        Err(e) => println!("validation error: {:?}", e),
+        Ok(maybe) => {
+            db.put(&maybe.typing)?;
+            println!("maybe: {:?}", maybe);
+        },
+    }
+    */
+}
 
 fn main() -> Result<(), Box<dyn Error>>{
     use typings::{ADT, ADTItem, ADTValue, Typing, BLOB_TYPE_HASH, ADT_TYPE_HASH};
@@ -489,12 +531,32 @@ fn main() -> Result<(), Box<dyn Error>>{
         vec![ADTValue::Hash(t1.hash()), ADTValue::Hash(t2.hash())],
     );
     
-    match typings::validate_adt_instance(&double_ref_type, &double_instance) {
-        Err(e) => println!("validation error: {:?}", e),
-        Ok(maybe) => {
-            println!("maybe: {:?}", maybe);
+
+    db.put(&blob1)?;
+    db.put(&blob2)?;
+    db.put(&t1)?;
+    db.put(&t2)?;
+    db.put(&double_ref_type)?;
+    db.put(&double_ref_typing)?;
+    db.put(&double_instance)?;
+
+    let typing = confirm_typing_legit(&db, &double_ref_type, &double_instance)?;
+    db.put(&typing);
+
+    match db.get(typing.hash())? {
+        None => println!("nah"),
+        Some(bytes) => {
+            println!("{}", bytes.len());
         },
     }
+
+    // match typings::validate_adt_instance(&double_ref_type, &double_instance) {
+    //     Err(e) => println!("validation error: {:?}", e),
+    //     Ok(maybe) => {
+    //         db.put(&maybe.typing)?;
+    //         println!("maybe: {:?}", maybe);
+    //     },
+    // }
 
     /*
 
