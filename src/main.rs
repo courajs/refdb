@@ -14,9 +14,14 @@ mod error {
     #[derive(Debug)]
     pub enum Error {
         RkvError(rkv::error::StoreError),
+        BlobParseError,
         ADTParseError(&'static str),
         TypingParseError(&'static str),
         TypingCreationError(&'static str),
+        FetchError(&'static str),
+        Arbitrary(&'static str),
+        NotFound,
+        Unimplemented,
     }
     impl std::fmt::Display for Error {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
@@ -32,8 +37,9 @@ mod storage {
     use sha3::{Digest, Sha3_256};
     use std::fmt;
     use crate::error::Error;
+    use crate::error::Error::*;
 
-    #[derive(Copy, Clone)]
+    #[derive(Copy, Clone, PartialEq, Eq)]
     pub struct Hash(pub [u8; 32]);
     impl AsRef<[u8]> for Hash {
         fn as_ref(&self) -> &[u8] {
@@ -83,6 +89,16 @@ mod storage {
             v
         }
     }
+
+    impl Decodable for Blob {
+        fn decode(bytes: &[u8]) -> Result<Blob, Error> {
+            if bytes.len() == 0 {
+                Err(BlobParseError)
+            } else {
+                Ok(Blob { bytes: bytes[1..].into() })
+            }
+        }
+    }
 }
 
 mod typings {
@@ -110,6 +126,9 @@ mod typings {
             if bytes.len() < MIN_ADT_SIZE {
                 Err(ADTParseError("too short overall"))
             } else {
+                if bytes[0] != 0 {
+                    return Err(Arbitrary("ADT definitions must be stored in blobs"));
+                }
                 let (value, rest) = ADTItem::decode(&bytes[17..])?;
                 if rest.len() == 0 {
                     let mut uniqueness = [0; 16];
@@ -290,6 +309,10 @@ mod typings {
                 }
             }
         }
+
+        pub fn hydrate(kind: &ADT, bytes: &[u8]) -> Result<ADTValue, Error> {
+            validate_adt_instance_bytes(kind, bytes)
+        }
     }
 
     impl Storable for ADTValue {
@@ -315,8 +338,48 @@ mod typings {
         pub prereqs: Vec<ExpectedTyping>,
     }
 
-    pub fn validate_adt_instance_bytes(t: &ADTItem, bytes: &[u8]) -> Result<Vec<ExpectedTyping>, Error> {
-        Err(TypingCreationError("unimplemented"))
+    pub fn validate_adt_instance_bytes(t: &ADT, bytes: &[u8]) -> Result<ADTValue, Error> {
+        let (value, rest) = inner_validate_adt_instance_bytes(&t.value, bytes)?;
+        if rest.len() > 0 {
+            Err(Arbitrary("too many bytes for value decoding"))
+        } else {
+            Ok(value)
+        }
+    }
+
+    pub fn inner_validate_adt_instance_bytes<'a, 'b>(t: &'a ADTItem, bytes: &'b [u8]) -> Result<(ADTValue, &'b [u8]), Error> {
+        match t {
+            ADTItem::Hash(type_hash) => Ok((ADTValue::Hash(parse_hash(bytes)?), &bytes[32..])),
+            ADTItem::Sum(variants) => {
+                if bytes.len() == 0 {
+                    return Err(Arbitrary("not enough bytes to parse a sum tag"));
+                }
+                let variant = bytes[0];
+                if variant as usize >= variants.len() {
+                    return Err(Arbitrary("Invalid variant tag when parsing a value"));
+                }
+                let (inner, rest) = inner_validate_adt_instance_bytes(&variants[variant as usize], &bytes[1..])?;
+                Ok((ADTValue::Sum {kind: variant, value: Box::new(inner)}, rest))
+            },
+            ADTItem::Product(fields) => {
+                let mut values = Vec::new();
+                let mut rest = bytes;
+                for field in fields {
+                    let (val, more) = inner_validate_adt_instance_bytes(field, rest)?;
+                    values.push(val);
+                    rest = more;
+                }
+                Ok((ADTValue::Product(values), rest))
+            }
+        }
+    }
+
+    fn parse_hash(bytes: &[u8]) -> Result<Hash, Error> {
+        if bytes.len() >= 32 {
+            Ok(Hash::sure_from(&bytes[..32]))
+        } else {
+            Err(Arbitrary("not enough bytes to parse out a hash"))
+        }
     }
 
     pub fn validate_adt_instance(t: &ADT, value: &ADTValue) -> Result<MaybeValid, Error> {
@@ -378,14 +441,22 @@ mod typings {
 }
 
 mod rkvstorage {
-    use crate::storage::{Hash, Storable};
+    use crate::storage::{Hash, Blob, Storable, Decodable};
     use rkv::Value;
     use crate::error::Error;
     use crate::error::Error::*;
+    use crate::typings::{Typing, ADT, ADTValue, BLOB_TYPE_HASH, ADT_TYPE_HASH};
 
     pub struct Db<'a> {
         pub env: &'a rkv::Rkv,
         pub store: &'a rkv::SingleStore,
+    }
+
+    pub enum Item {
+        Blob(Blob),
+        BlobRef(Hash),
+        Type(ADT),
+        Value(ADT, ADTValue),
     }
 
     impl<'a> Db<'a> {
@@ -401,7 +472,7 @@ mod rkvstorage {
             Ok(())
         }
 
-        pub fn get(&self, hash: Hash) -> Result<Option<Vec<u8>>, Error> {
+        pub fn get_bytes(&self, hash: Hash) -> Result<Option<Vec<u8>>, Error> {
             let reader = self.env.read().expect("reader");
             let r = self.store.get(&reader, &hash).map_err(|e| { RkvError(e) })?;
             match r {
@@ -416,13 +487,42 @@ mod rkvstorage {
                 }
             }
         }
+
+        pub fn get(&self, hash: Hash) -> Result<Item, Error> {
+            let bytes = self.get_bytes(hash)?.ok_or(NotFound)?;
+            if bytes.len() == 0 {
+                Err(Arbitrary("zero-length blob encountered"))
+            } else if bytes[0] == 0 {
+                Blob::decode(&bytes).map(|b| { Item::Blob(b) })
+            } else if bytes[0] == 1 {
+                let typing = Typing::decode(&bytes)?;
+                if typing.type_hash == BLOB_TYPE_HASH {
+                    return Ok(Item::BlobRef(typing.data_hash));
+                } else if typing.type_hash == ADT_TYPE_HASH {
+                    let definition_bytes = self.get_bytes(typing.data_hash)?.ok_or(Arbitrary("couldn't get type definition"))?;
+                    let kind = ADT::decode(&definition_bytes)?;
+                    return Ok(Item::Type(kind))
+                } else {
+                    match self.get(typing.type_hash)? {
+                        Item::Blob(_) | Item::BlobRef(_) | Item::Value(_,_) => Err(FetchError("found non-type instead of type in type_hash of a typing")),
+                        Item::Type(kind) => {
+                            let instance_bytes = self.get_bytes(typing.data_hash)?.ok_or(Arbitrary("couldn't get data for data_hash"))?;
+                            let instance = ADTValue::hydrate(&kind, &instance_bytes)?;
+                            Ok(Item::Value(kind, instance))
+                        },
+                    }
+                }
+            } else {
+                Err(Arbitrary("unknown storage type flag"))
+            }
+        }
     }
 }
 
 fn confirm_typing_legit(db: &rkvstorage::Db, kind: &ADT, value: &ADTValue) -> Result<Typing, Error> {
     typings::validate_adt_instance(kind, value).and_then(|maybe| {
         for expected in maybe.prereqs {
-            match db.get(expected.reference)? {
+            match db.get_bytes(expected.reference)? {
                 None => {
                     return Err(TypingCreationError("sub-field referencing non-existant value"))
                 },
@@ -512,7 +612,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     let typing = apply_typing_and_store(&db, &double_ref_type, &double_instance)?;
 
-    match db.get(typing.hash())? {
+    match db.get_bytes(typing.hash())? {
         None => println!("nah"),
         Some(bytes) => {
             println!("{}", bytes.len());
