@@ -5,7 +5,7 @@
 
 use rkv::{Manager, Rkv, SingleStore, StoreOptions};
 use std::path::Path;
-use crate::storage::Storable;
+use crate::storage::{Storable, Decodable};
 use crate::typings::{ADT, ADTItem, ADTValue, Typing, BLOB_TYPE_HASH, ADT_TYPE_HASH};
 use crate::error::Error;
 use crate::error::Error::*;
@@ -31,6 +31,7 @@ mod error {
 mod storage {
     use sha3::{Digest, Sha3_256};
     use std::fmt;
+    use crate::error::Error;
 
     #[derive(Copy, Clone)]
     pub struct Hash(pub [u8; 32]);
@@ -65,6 +66,10 @@ mod storage {
         }
     }
 
+    pub trait Decodable: Sized {
+        fn decode(bytes: &[u8]) -> Result<Self, Error>;
+    }
+
     pub struct Blob {
         pub bytes: Vec<u8>,
     }
@@ -81,7 +86,7 @@ mod storage {
 }
 
 mod typings {
-    use crate::storage::{Hash, Storable};
+    use crate::storage::{Hash, Storable, Decodable};
     use std::convert::TryInto;
     use std::fmt;
     use hex_literal::hex;
@@ -100,8 +105,8 @@ mod typings {
 
     // blob zero byte + uniqueness + ADTItem tag + a single hash (smallest variant)
     const MIN_ADT_SIZE: usize = 1 + 16 + 1 + 32;
-    impl ADT {
-        pub fn decode(bytes: &[u8]) -> Result<ADT, Error> {
+    impl Decodable for ADT {
+        fn decode(bytes: &[u8]) -> Result<ADT, Error> {
             if bytes.len() < MIN_ADT_SIZE {
                 Err(ADTParseError("too short overall"))
             } else {
@@ -239,8 +244,8 @@ mod typings {
 
     // leading 1 to indicate a typing, then two hashes
     const TYPING_SIZE: usize = 1 + 32 + 32;
-    impl Typing {
-        pub fn decode(bytes: &[u8]) -> Result<Typing, Error> {
+    impl Decodable for Typing {
+        fn decode(bytes: &[u8]) -> Result<Typing, Error> {
             if bytes.len() != 65 {
                 return Err(TypingParseError("Wrong length for a typing object"));
             }
@@ -414,9 +419,7 @@ mod rkvstorage {
     }
 }
 
-fn confirm_typing_legit(db: &rkvstorage::Db, kind: &ADT, value: &ADTValue) ->
-    Result<Typing, Error>
-{
+fn confirm_typing_legit(db: &rkvstorage::Db, kind: &ADT, value: &ADTValue) -> Result<Typing, Error> {
     typings::validate_adt_instance(kind, value).and_then(|maybe| {
         for expected in maybe.prereqs {
             match db.get(expected.reference)? {
@@ -436,6 +439,12 @@ fn confirm_typing_legit(db: &rkvstorage::Db, kind: &ADT, value: &ADTValue) ->
         }
         Ok(maybe.typing)
     })
+}
+
+fn apply_typing_and_store(db: &rkvstorage::Db, kind: &ADT, value: &ADTValue) -> Result<Typing, Error> {
+    let t = confirm_typing_legit(db, kind, value)?;
+    db.put(&t)?;
+    Ok(t)
 }
 
 
@@ -501,8 +510,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     db.put(&double_ref_typing)?;
     db.put(&double_instance)?;
 
-    let typing = confirm_typing_legit(&db, &double_ref_type, &double_instance)?;
-    db.put(&typing)?;
+    let typing = apply_typing_and_store(&db, &double_ref_type, &double_instance)?;
 
     match db.get(typing.hash())? {
         None => println!("nah"),
