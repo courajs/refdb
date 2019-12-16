@@ -6,10 +6,27 @@
 // #[macro_use]
 // extern crate hex_literal;
 
+mod error {
+    #[derive(Debug)]
+    pub enum Error {
+        RkvError(rkv::error::StoreError),
+        ADTParseError(&'static str),
+    }
+    impl std::fmt::Display for Error {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+            <Self as std::fmt::Debug>::fmt(self, f)
+        }
+    }
+
+    impl std::error::Error for Error {}
+}
+
 // Basic persistence primitives
 mod storage {
     use sha3::{Digest, Sha3_256};
     use std::fmt;
+    use crate::error::Error;
+    use crate::error::Error::*;
 
     #[derive(Copy, Clone)]
     pub struct Hash(pub [u8; 32]);
@@ -64,6 +81,8 @@ mod typings {
     use std::convert::TryInto;
     use std::fmt;
     use hex_literal::hex;
+    use crate::error::Error;
+    use crate::error::Error::*;
 
     // Algebraic Data Type
     pub struct ADT {
@@ -77,12 +96,10 @@ mod typings {
 
     // blob zero byte + uniqueness + ADTItem tag + a single hash (smallest variant)
     const MIN_ADT_SIZE: usize = 1 + 16 + 1 + 32;
-    #[derive(Debug)]
-    pub struct InvalidADTParseError(pub &'static str);
     impl ADT {
-        pub fn decode(bytes: &[u8]) -> Result<ADT, InvalidADTParseError> {
+        pub fn decode(bytes: &[u8]) -> Result<ADT, Error> {
             if bytes.len() < MIN_ADT_SIZE {
-                Err(InvalidADTParseError("too short overall"))
+                Err(ADTParseError("too short overall"))
             } else {
                 let (value, rest) = ADTItem::decode(&bytes[17..])?;
                 if rest.len() == 0 {
@@ -91,7 +108,7 @@ mod typings {
                     Ok(ADT { uniqueness, value })
                 } else {
                     dbg!(rest);
-                    Err(InvalidADTParseError("extra left over"))
+                    Err(ADTParseError("extra left over"))
                 }
             }
         }
@@ -115,20 +132,20 @@ mod typings {
         Product(Vec<ADTItem>),
     }
     impl ADTItem {
-        fn decode(bytes: &[u8]) -> Result<(ADTItem, &[u8]), InvalidADTParseError> {
+        fn decode(bytes: &[u8]) -> Result<(ADTItem, &[u8]), Error> {
             if bytes.len() == 0 {
-                return Err(InvalidADTParseError("nothing available for item"));
+                return Err(ADTParseError("nothing available for item"));
             } else if bytes[0] > 2 {
-                return Err(InvalidADTParseError("invalid item disambiguation byte"));
+                return Err(ADTParseError("invalid item disambiguation byte"));
             } else if bytes[0] == 0 {
                 if bytes.len() < 33 {
-                    return Err(InvalidADTParseError("not long enough for hash"));
+                    return Err(ADTParseError("not long enough for hash"));
                 } else {
                     return Ok((ADTItem::Hash(Hash::sure_from(&bytes[1..33])), &bytes[33..]));
                 }
             } else if bytes[0] == 1 || bytes[0] == 2 {
                 if bytes.len() < 9 {
-                    return Err(InvalidADTParseError("not long enough for sum"));
+                    return Err(ADTParseError("not long enough for sum"));
                 }
                 let num = usize::from_be_bytes(bytes[1..9].try_into().unwrap());
                 let mut v = Vec::with_capacity(num);
@@ -144,7 +161,7 @@ mod typings {
                     return Ok((ADTItem::Product(v), rest));
                 }
             }
-            return Err(InvalidADTParseError("unknown item type"));
+            return Err(ADTParseError("unknown item type"));
         }
         fn bytes(&self) -> Vec<u8> {
             let mut result = Vec::new();
@@ -359,8 +376,9 @@ mod rkvstorage {
     use crate::storage::{Hash, Storable};
     use rkv::Value;
     use std::convert::From;
-    use std::error::Error;
     use std::fmt::{Display,Debug};
+    use crate::error::Error;
+    use crate::error::Error::*;
 
     pub struct Db<'a> {
         pub env: &'a rkv::Rkv,
@@ -383,7 +401,6 @@ mod rkvstorage {
             <rkv::error::StoreError as Debug>::fmt(&self.0, formatter)
         }
     }
-    impl Error for DbError { }
 
     impl<'a> Db<'a> {
         // pub fn new() -> Db {
@@ -393,18 +410,21 @@ mod rkvstorage {
         //     Db { arc, store }
         // }
 
-        pub fn put(&self, item: &impl Storable) -> Result<(), impl Error> {
+        pub fn put(&self, item: &impl Storable) -> Result<(), Error> {
             // FIXME - handle errors properly here
             let mut writer = self.env.write().unwrap();
-            self.store
-                .put(&mut writer, &item.hash(), &Value::Blob(&item.bytes()))?;
-            writer.commit()?;
-            Ok(()) as Result<(), DbError>
+            if let Err(e) = self.store.put(&mut writer, &item.hash(), &Value::Blob(&item.bytes())) {
+                return Err(RkvError(e));
+            }
+            if let Err(e) = writer.commit() {
+                return Err(RkvError(e));
+            }
+            Ok(())
         }
 
-        pub fn get(&self, hash: Hash) -> Result<Option<Vec<u8>>, impl Error> {
+        pub fn get(&self, hash: Hash) -> Result<Option<Vec<u8>>, Error> {
             let reader = self.env.read().expect("reader");
-            let r = self.store.get(&reader, &hash)?;
+            let r = self.store.get(&reader, &hash).map_err(|e| { RkvError(e) })?;
             match r {
                 Some(Value::Blob(bytes)) => Ok(Some(bytes.into())),
                 Some(_) => {
@@ -413,7 +433,7 @@ mod rkvstorage {
                 }
                 None => {
                     println!("Entry missing from store...");
-                    Ok(None) as Result<Option<Vec<u8>>, DbError>
+                    Ok(None)
                 }
             }
         }
@@ -423,15 +443,10 @@ mod rkvstorage {
 use rkv::{Manager, Rkv, SingleStore, StoreOptions};
 use rkv::error::StoreError;
 use std::path::Path;
-use std::error::Error;
 use std::fmt::{Debug,Display};
 use crate::storage::Storable;
 use crate::typings::{ADT, ADTValue, Typing};
 use crate::rkvstorage::Db;
-
-trait MyError: Debug + Display {}
-impl Error for MyError {}
-impl MyError for StoreError {}
 
 fn confirm_typing_legit(db: &rkvstorage::Db, kind: &ADT, value: &ADTValue) ->
     Result<Typing, &'static str>
@@ -473,7 +488,7 @@ fn confirm_typing_legit(db: &rkvstorage::Db, kind: &ADT, value: &ADTValue) ->
     */
 }
 
-fn main() -> Result<(), Box<dyn Error>>{
+fn main() -> Result<(), Box<dyn std::error::Error>>{
     use typings::{ADT, ADTItem, ADTValue, Typing, BLOB_TYPE_HASH, ADT_TYPE_HASH};
     // let args: Vec<String> = env::args().collect();
     // println!("{:?}", args);
