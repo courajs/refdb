@@ -16,6 +16,7 @@ mod error {
         RkvError(rkv::error::StoreError),
         ADTParseError(&'static str),
         TypingParseError(&'static str),
+        TypingCreationError(&'static str),
     }
     impl std::fmt::Display for Error {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
@@ -309,13 +310,11 @@ mod typings {
         pub prereqs: Vec<ExpectedTyping>,
     }
 
-    #[derive(Debug)]
-    pub struct InvalidCustomTypingError(pub &'static str);
-    pub fn validate_adt_instance_bytes(t: &ADTItem, bytes: &[u8]) -> Result<Vec<ExpectedTyping>, InvalidCustomTypingError> {
-        Err(InvalidCustomTypingError("unimplemented"))
+    pub fn validate_adt_instance_bytes(t: &ADTItem, bytes: &[u8]) -> Result<Vec<ExpectedTyping>, Error> {
+        Err(TypingCreationError("unimplemented"))
     }
 
-    pub fn validate_adt_instance(t: &ADT, value: &ADTValue) -> Result<MaybeValid, InvalidCustomTypingError> {
+    pub fn validate_adt_instance(t: &ADT, value: &ADTValue) -> Result<MaybeValid, Error> {
         Ok(MaybeValid {
             typing: Typing {
                 type_hash: t.hash(),
@@ -325,12 +324,12 @@ mod typings {
         })
     }
 
-    fn inner_validate_adt_instance(t: &ADTItem, value: &ADTValue) -> Result<Vec<ExpectedTyping>, InvalidCustomTypingError> {
+    fn inner_validate_adt_instance(t: &ADTItem, value: &ADTValue) -> Result<Vec<ExpectedTyping>, Error> {
         match t {
             ADTItem::Hash(t) => {
                 match value {
-                    ADTValue::Sum {..} => Err(InvalidCustomTypingError("Expected Hash, found Sum")),
-                    ADTValue::Product(_) => Err(InvalidCustomTypingError("Expected Hash, found Product")),
+                    ADTValue::Sum {..} => Err(TypingCreationError("Expected Hash, found Sum")),
+                    ADTValue::Product(_) => Err(TypingCreationError("Expected Hash, found Product")),
                     ADTValue::Hash(v) => Ok(vec![ExpectedTyping {
                         reference: *v,
                         kind: *t,
@@ -339,11 +338,11 @@ mod typings {
             }
             ADTItem::Sum(subs) => {
                 match value {
-                    ADTValue::Hash(_) => Err(InvalidCustomTypingError("Expected Sum, found Hash")),
-                    ADTValue::Product(_) => Err(InvalidCustomTypingError("Expected Sum, found Product")),
+                    ADTValue::Hash(_) => Err(TypingCreationError("Expected Sum, found Hash")),
+                    ADTValue::Product(_) => Err(TypingCreationError("Expected Sum, found Product")),
                     ADTValue::Sum { kind, value: v } => {
                         if *kind as usize >= subs.len() {
-                            Err(InvalidCustomTypingError("Sum variant tag out of range"))
+                            Err(TypingCreationError("Sum variant tag out of range"))
                         } else {
                             inner_validate_adt_instance(&subs[*kind as usize], v)
                         }
@@ -352,11 +351,11 @@ mod typings {
             }
             ADTItem::Product(field_types) => {
                 match value {
-                    ADTValue::Hash(_) => Err(InvalidCustomTypingError("Expected Hash, found Product")),
-                    ADTValue::Sum {..} => Err(InvalidCustomTypingError("Expected Sum, found Product")),
+                    ADTValue::Hash(_) => Err(TypingCreationError("Expected Hash, found Product")),
+                    ADTValue::Sum {..} => Err(TypingCreationError("Expected Sum, found Product")),
                     ADTValue::Product(field_values) => {
                         if field_types.len() != field_values.len() {
-                            Err(InvalidCustomTypingError("Wrong number of product field values"))
+                            Err(TypingCreationError("Wrong number of product field values"))
                         } else {
                             let num = field_types.len();
                             let mut hashes: Vec<ExpectedTyping> = Vec::with_capacity(num);
@@ -418,40 +417,25 @@ mod rkvstorage {
 fn confirm_typing_legit(db: &rkvstorage::Db, kind: &ADT, value: &ADTValue) ->
     Result<Typing, Error>
 {
-    match typings::validate_adt_instance(kind, value) {
-        Ok(maybe) => {
-            for expected in maybe.prereqs {
-                match db.get(expected.reference) {
-                    Err(_) => {
-                        return Err(TypingParseError("error getting for sub-field"))
-                    },
-                    Ok(None) => {
-                        return Err(TypingParseError("sub-field referencing non-existant value"))
-                    },
-                    Ok(Some(bytes)) => {
-                        Typing::decode(&bytes[..]).and_then(|typing| {
-                            if typing.type_hash.0 == expected.kind.0 {
-                                Ok(typing)
-                            } else {
-                                Err(TypingParseError("typing of wrong type as sub-field"))
-                            }
-                        })?;
-                    },
-                }
+    typings::validate_adt_instance(kind, value).and_then(|maybe| {
+        for expected in maybe.prereqs {
+            match db.get(expected.reference)? {
+                None => {
+                    return Err(TypingCreationError("sub-field referencing non-existant value"))
+                },
+                Some(bytes) => {
+                    Typing::decode(&bytes[..]).and_then(|typing| {
+                        if typing.type_hash.0 == expected.kind.0 {
+                            Ok(())
+                        } else {
+                            Err(TypingCreationError("typing of wrong type as sub-field"))
+                        }
+                    })?;
+                },
             }
-            return Ok(maybe.typing)
-        },
-        Err(e) => Err(TypingParseError("Failed basic validation")),
-    }
-
-        /*
-        Err(e) => println!("validation error: {:?}", e),
-        Ok(maybe) => {
-            db.put(&maybe.typing)?;
-            println!("maybe: {:?}", maybe);
-        },
-    }
-    */
+        }
+        Ok(maybe.typing)
+    })
 }
 
 
@@ -462,7 +446,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let arc = Manager::singleton()
         .write()
         .unwrap()
-        .get_or_create(Path::new("/Users/aaron/dev/rkv/data"), Rkv::new)
+        .get_or_create(Path::new("/Users/aaron/dev/rf0/data"), Rkv::new)
         .unwrap();
     let env = arc.read().unwrap();
     let store: SingleStore = env.open_single("mydb", StoreOptions::create()).unwrap();
