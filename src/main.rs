@@ -79,6 +79,28 @@ mod storage {
     pub struct Blob {
         pub bytes: Vec<u8>,
     }
+    impl fmt::Debug for Blob {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+            if self.bytes.len() <= 32 {
+                write!(f, "Blob(len={})<0x", self.bytes.len())?;
+                for byte in &self.bytes {
+                    write!(f, "{:02x}", byte)?;
+                }
+                write!(f, ">")?;
+            } else {
+                write!(f, "Blob(len={})<0x", self.bytes.len())?;
+                for byte in &self.bytes[..16] {
+                    write!(f, "{:02x}", byte)?;
+                }
+                write!(f, " ... ");
+                for byte in &self.bytes[self.bytes.len() - 16..] {
+                    write!(f, "{:02x}", byte)?;
+                }
+                write!(f, ">")?;
+            }
+            Ok(())
+        }
+    }
 
     impl Storable for Blob {
         fn bytes(&self) -> Vec<u8> {
@@ -281,6 +303,7 @@ mod typings {
         }
     }
 
+    #[derive(Debug)]
     pub enum ADTValue {
         Hash(Hash),
         Sum {
@@ -452,6 +475,7 @@ mod rkvstorage {
         pub store: &'a rkv::SingleStore,
     }
 
+    #[derive(Debug)]
     pub enum Item {
         Blob(Blob),
         BlobRef(Hash),
@@ -612,12 +636,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
 
     let typing = apply_typing_and_store(&db, &double_ref_type, &double_instance)?;
 
-    match db.get_bytes(typing.hash())? {
-        None => println!("nah"),
-        Some(bytes) => {
-            println!("{}", bytes.len());
-        },
-    }
+    dbg!(db.get(typing.hash())?);
+    // match db.get(typing.hash())? {
+    //     None => println!("nah"),
+    //     Some(bytes) => {
+    //         println!("{}", bytes.len());
+    //     },
+    // }
 
     Ok(())
 }
