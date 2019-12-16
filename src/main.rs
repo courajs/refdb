@@ -11,6 +11,7 @@ mod error {
     pub enum Error {
         RkvError(rkv::error::StoreError),
         ADTParseError(&'static str),
+        TypingParseError(&'static str),
     }
     impl std::fmt::Display for Error {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
@@ -233,20 +234,18 @@ mod typings {
         }
     }
 
-    #[derive(Debug)]
-    pub struct InvalidTypingParseError(pub &'static str);
     // leading 1 to indicate a typing, then two hashes
     const TYPING_SIZE: usize = 1 + 32 + 32;
     impl Typing {
-        pub fn decode(bytes: &[u8]) -> Result<Typing, InvalidTypingParseError> {
+        pub fn decode(bytes: &[u8]) -> Result<Typing, Error> {
             if bytes.len() != 65 {
-                return Err(InvalidTypingParseError("Wrong length for a typing object"));
+                return Err(TypingParseError("Wrong length for a typing object"));
             }
             if bytes[0] == 0 {
-                return Err(InvalidTypingParseError("This is a blob, not a typing!"));
+                return Err(TypingParseError("This is a blob, not a typing!"));
             }
             if bytes[0] != 1 {
-                return Err(InvalidTypingParseError("This isn't a typing!"));
+                return Err(TypingParseError("This isn't a typing!"));
             }
             Ok(Typing {
                 type_hash: Hash::sure_from(&bytes[1..33]),
@@ -385,23 +384,6 @@ mod rkvstorage {
         pub store: &'a rkv::SingleStore,
     }
 
-    struct DbError(rkv::error::StoreError);
-    impl From<rkv::error::StoreError> for DbError {
-        fn from(e: rkv::error::StoreError) -> Self {
-            DbError(e)
-        }
-    }
-    impl Display for DbError {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-            <rkv::error::StoreError as Display>::fmt(&self.0, formatter)
-        }
-    }
-    impl Debug for DbError {
-        fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-            <rkv::error::StoreError as Debug>::fmt(&self.0, formatter)
-        }
-    }
-
     impl<'a> Db<'a> {
         // pub fn new() -> Db {
         //     let arc = Manager::singleton().write().unwrap().get_or_create(Path::new("/Users/aaron/dev/rkv/data"), Rkv::new).unwrap();
@@ -447,35 +429,36 @@ use std::fmt::{Debug,Display};
 use crate::storage::Storable;
 use crate::typings::{ADT, ADTValue, Typing};
 use crate::rkvstorage::Db;
+use crate::error::Error;
+use crate::error::Error::*;
 
 fn confirm_typing_legit(db: &rkvstorage::Db, kind: &ADT, value: &ADTValue) ->
-    Result<Typing, &'static str>
+    Result<Typing, Error>
 {
     match typings::validate_adt_instance(kind, value) {
         Ok(maybe) => {
             for expected in maybe.prereqs {
                 match db.get(expected.reference) {
                     Err(_) => {
-                        return Err("error getting for sub-field")
+                        return Err(TypingParseError("error getting for sub-field"))
                     },
                     Ok(None) => {
-                        return Err("sub-field referencing non-existant value")
+                        return Err(TypingParseError("sub-field referencing non-existant value"))
                     },
                     Ok(Some(bytes)) => {
-                        match Typing::decode(&bytes[..]) {
-                            Err(e) => return Err(e.0),
-                            Ok(typing) => {
-                                if typing.type_hash.0 != expected.kind.0 {
-                                    return Err("typing of wrong type as sub-field");
-                                }
-                            },
-                        }
-                    }
+                        Typing::decode(&bytes[..]).and_then(|typing| {
+                            if typing.type_hash.0 == expected.kind.0 {
+                                Ok(typing)
+                            } else {
+                                Err(TypingParseError("typing of wrong type as sub-field"))
+                            }
+                        })?;
+                    },
                 }
             }
             return Ok(maybe.typing)
         },
-        Err(e) => Err("Failed basic validation"),
+        Err(e) => Err(TypingParseError("Failed basic validation")),
     }
 
         /*
