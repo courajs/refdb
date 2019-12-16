@@ -1,10 +1,14 @@
+#![allow(dead_code,unused_variables)]
+
 // use std::env;
 // use num::{BigUint};
-// use sha3::digest::generic_array::GenericArray;
 
-// use hex_literal::hex;
-// #[macro_use]
-// extern crate hex_literal;
+use rkv::{Manager, Rkv, SingleStore, StoreOptions};
+use std::path::Path;
+use crate::storage::Storable;
+use crate::typings::{ADT, ADTItem, ADTValue, Typing, BLOB_TYPE_HASH, ADT_TYPE_HASH};
+use crate::error::Error;
+use crate::error::Error::*;
 
 mod error {
     #[derive(Debug)]
@@ -26,8 +30,6 @@ mod error {
 mod storage {
     use sha3::{Digest, Sha3_256};
     use std::fmt;
-    use crate::error::Error;
-    use crate::error::Error::*;
 
     #[derive(Copy, Clone)]
     pub struct Hash(pub [u8; 32]);
@@ -374,8 +376,6 @@ mod typings {
 mod rkvstorage {
     use crate::storage::{Hash, Storable};
     use rkv::Value;
-    use std::convert::From;
-    use std::fmt::{Display,Debug};
     use crate::error::Error;
     use crate::error::Error::*;
 
@@ -385,13 +385,6 @@ mod rkvstorage {
     }
 
     impl<'a> Db<'a> {
-        // pub fn new() -> Db {
-        //     let arc = Manager::singleton().write().unwrap().get_or_create(Path::new("/Users/aaron/dev/rkv/data"), Rkv::new).unwrap();
-        //     let env = arc.read().unwrap();
-        //     let store: SingleStore = env.open_single("mydb", StoreOptions::create()).unwrap();
-        //     Db { arc, store }
-        // }
-
         pub fn put(&self, item: &impl Storable) -> Result<(), Error> {
             // FIXME - handle errors properly here
             let mut writer = self.env.write().unwrap();
@@ -421,16 +414,6 @@ mod rkvstorage {
         }
     }
 }
-
-use rkv::{Manager, Rkv, SingleStore, StoreOptions};
-use rkv::error::StoreError;
-use std::path::Path;
-use std::fmt::{Debug,Display};
-use crate::storage::Storable;
-use crate::typings::{ADT, ADTValue, Typing};
-use crate::rkvstorage::Db;
-use crate::error::Error;
-use crate::error::Error::*;
 
 fn confirm_typing_legit(db: &rkvstorage::Db, kind: &ADT, value: &ADTValue) ->
     Result<Typing, Error>
@@ -471,8 +454,8 @@ fn confirm_typing_legit(db: &rkvstorage::Db, kind: &ADT, value: &ADTValue) ->
     */
 }
 
+
 fn main() -> Result<(), Box<dyn std::error::Error>>{
-    use typings::{ADT, ADTItem, ADTValue, Typing, BLOB_TYPE_HASH, ADT_TYPE_HASH};
     // let args: Vec<String> = env::args().collect();
     // println!("{:?}", args);
 
@@ -508,10 +491,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     let mut uniq = [0; 16];
     uniq[0] = 254;
     uniq[15] = 239;
-    // let t_blob = ADT {
-    //     uniqueness: uniq,
-    //     value: ADTItem::Hash(ADT_TYPE_HASH),
-    // };
     let double_ref_type = ADT {
         uniqueness: uniq,
         value: ADTItem::Product(vec![
@@ -539,7 +518,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
     db.put(&double_instance)?;
 
     let typing = confirm_typing_legit(&db, &double_ref_type, &double_instance)?;
-    db.put(&typing);
+    db.put(&typing)?;
 
     match db.get(typing.hash())? {
         None => println!("nah"),
@@ -548,94 +527,5 @@ fn main() -> Result<(), Box<dyn std::error::Error>>{
         },
     }
 
-    // match typings::validate_adt_instance(&double_ref_type, &double_instance) {
-    //     Err(e) => println!("validation error: {:?}", e),
-    //     Ok(maybe) => {
-    //         db.put(&maybe.typing)?;
-    //         println!("maybe: {:?}", maybe);
-    //     },
-    // }
-
-    /*
-
-    // dbg!(&t_blob);
-
-
-    {
-        // Use a write transaction to mutate the store via a `Writer`.
-        // There can be only one writer for a given environment, so opening
-        // a second one will block until the first completes.
-        // let mut writer = env.write().unwrap();
-
-        db.put(&b)?;
-        db.put(&t)?;
-
-        db.put(&double_ref_type)?;
-        db.put(&double_ref_typing)?;
-        // db.put(&tblob);
-        // put(&store, &mut writer, &b);
-        // put(&store, &mut writer, &t_blob);
-        // store.put(&mut writer, &b.hash(), &Value::Blob(&b.serialize()));
-    }
-
-    match db.get(b.hash()) {
-        Ok(Some(bytes)) => {
-            dbg!(bytes.len());
-            // dbg!(bytes);
-            // match ADT::decode(bytes) {
-            //     Ok(adt) => { dbg!(adt); }
-            //     Err(e) => { dbg!(e); }
-            // };
-        }
-        Ok(None) => {
-            println!("Attempted to fetch something not in store");
-        }
-        Err(e) => {
-            println!("Error fetching from db, {}", e);
-        }
-    }
-
-    match db.get(t.hash()) {
-        Ok(Some(bytes)) => {
-            dbg!(bytes.len());
-            match Typing::decode(&bytes) {
-                Err(e) => println!("{:?}", e),
-                Ok(t) => {
-                    println!("typing: {:?}", t);
-                    println!("b hash: {:?}", b.hash())
-                }
-            }
-        }
-        Ok(None) => println!("Attempted to fetch something not in store"),
-        Err(e) => println!("Error fetching from db, {}", e),
-    }
-    */
-
     Ok(())
 }
-
-/*
-pub struct BigValue {
-    bytes: Vec<u8>,
-}
-
-impl BigValue {
-    pub fn value(&self) -> &Value {
-        Value::Blob(self.bytes.as_slice())
-    }
-}
-*/
-
-// struct InvalidHashLengthError(());
-// impl TryFrom<&[u8]> for Hash {
-//     type Error = InvalidHashLengthError;
-//     fn try_from(value: &[u8]) -> Result<Self, Self::Error> {
-//         if value.len() == 32 {
-//             let mut val = [0; 32];
-//             val.copy_from_slice(value);
-//             Ok(Hash(val))
-//         } else {
-//             Err(InvalidHashLengthError(()))
-//         }
-//     }
-// }
