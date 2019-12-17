@@ -6,9 +6,10 @@
 use std::{
     fmt,
     path::Path,
-    convert::TryInto,
+    convert::{From, TryInto},
 };
 
+use failure::{Fail, Error, ResultExt};
 use hex_literal::hex;
 use rkv::{Value, Manager, Rkv, SingleStore, StoreOptions};
 use sha3::{Digest, Sha3_256};
@@ -21,27 +22,6 @@ use nom::{
     sequence::{preceded, tuple},
     combinator::{rest, rest_len, verify, map, all_consuming},
 };
-
-use crate::Error::*;
-
-
-#[derive(Debug)]
-pub enum Error {
-    RkvError(rkv::error::StoreError),
-    TypingCreationError(&'static str),
-    FetchError(&'static str),
-    Arbitrary(&'static str),
-    NotFound,
-    Unimplemented,
-}
-
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-        <Self as std::fmt::Debug>::fmt(self, f)
-    }
-}
-
-impl std::error::Error for Error {}
 
 // Basic persistence primitives
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -298,11 +278,14 @@ impl ADTValue {
         }
     }
 
-    pub fn hydrate(kind: &ADT, bytes: &[u8]) -> Result<ADTValue, Error> {
+    pub fn hydrate(kind: &ADT, bytes: &[u8]) -> Result<ADTValue, impl Fail> {
         validate_adt_instance_bytes(kind, bytes)
     }
 }
 
+//    = note: expected type `std::result::Result<_, failure::error::Error>`
+//               found type `std::result::Result<_, StructuredADTInstantiationError>`
+//
 impl Storable for ADTValue {
     fn bytes(&self) -> Vec<u8> {
         let mut result = Vec::new();
@@ -326,25 +309,35 @@ pub struct MaybeValid {
     pub prereqs: Vec<ExpectedTyping>,
 }
 
-pub fn validate_adt_instance_bytes(t: &ADT, bytes: &[u8]) -> Result<ADTValue, Error> {
+#[derive(Debug, Fail)]
+enum BinaryADTInstiationError {
+    #[fail(display = "Reached end of blob while parsing {}", _0)]
+    Incomplete(&'static str),
+    #[fail(display = "Invalid sum variant. There are {} options, but found variant tag {}", _0, _1)]
+    InvalidSumVariant(usize, usize),
+    #[fail(display = "Excess data at end of blob. Finished parsing with {} bytes remaining out of {} total", _0, _1)]
+    Excess(usize, usize),
+}
+
+pub fn validate_adt_instance_bytes(t: &ADT, bytes: &[u8]) -> Result<ADTValue, BinaryADTInstiationError> {
     let (value, rest) = inner_validate_adt_instance_bytes(&t.value, bytes)?;
     if rest.len() > 0 {
-        Err(Arbitrary("too many bytes for value decoding"))
+        Err(BinaryADTInstiationError::Excess(rest.len(), bytes.len()))
     } else {
         Ok(value)
     }
 }
 
-pub fn inner_validate_adt_instance_bytes<'a, 'b>(t: &'a ADTItem, bytes: &'b [u8]) -> Result<(ADTValue, &'b [u8]), Error> {
+pub fn inner_validate_adt_instance_bytes<'a, 'b>(t: &'a ADTItem, bytes: &'b [u8]) -> Result<(ADTValue, &'b [u8]), BinaryADTInstiationError> {
     match t {
         ADTItem::Hash(type_hash) => Ok((ADTValue::Hash(parse_hash(bytes)?), &bytes[32..])),
         ADTItem::Sum(variants) => {
             if bytes.len() == 0 {
-                return Err(Arbitrary("not enough bytes to parse a sum tag"));
+                return Err(BinaryADTInstiationError::Incomplete("a sum variant tag"))
             }
             let variant = bytes[0];
             if variant as usize >= variants.len() {
-                return Err(Arbitrary("Invalid variant tag when parsing a value"));
+                return Err(BinaryADTInstiationError::InvalidSumVariant(variants.len(), variant as usize))
             }
             let (inner, rest) = inner_validate_adt_instance_bytes(&variants[variant as usize], &bytes[1..])?;
             Ok((ADTValue::Sum {kind: variant, value: Box::new(inner)}, rest))
@@ -362,15 +355,25 @@ pub fn inner_validate_adt_instance_bytes<'a, 'b>(t: &'a ADTItem, bytes: &'b [u8]
     }
 }
 
-fn parse_hash(bytes: &[u8]) -> Result<Hash, Error> {
+fn parse_hash(bytes: &[u8]) -> Result<Hash, BinaryADTInstiationError> {
     if bytes.len() >= 32 {
         Ok(Hash::sure_from(&bytes[..32]))
     } else {
-        Err(Arbitrary("not enough bytes to parse out a hash"))
+        Err(BinaryADTInstiationError::Incomplete("a hash"))
     }
 }
 
-pub fn validate_adt_instance(t: &ADT, value: &ADTValue) -> Result<MaybeValid, Error> {
+#[derive(Debug, Fail)]
+enum StructuredADTInstantiationError {
+    #[fail(display = "Expected a {}, found a {}", _0, _1)]
+    Mismatch(&'static str, &'static str),
+    #[fail(display = "Invalid sum variant. There are {} options, but found variant tag {}", _0, _1)]
+    InvalidSumVariant(usize, usize),
+    #[fail(display = "Invalid number of product fields. Expected {}, found {}", _0, _1)]
+    InvalidProductFieldCount(usize, usize),
+}
+
+pub fn validate_adt_instance(t: &ADT, value: &ADTValue) -> Result<MaybeValid, StructuredADTInstantiationError> {
     Ok(MaybeValid {
         typing: Typing {
             type_hash: t.hash(),
@@ -380,12 +383,12 @@ pub fn validate_adt_instance(t: &ADT, value: &ADTValue) -> Result<MaybeValid, Er
     })
 }
 
-fn inner_validate_adt_instance(t: &ADTItem, value: &ADTValue) -> Result<Vec<ExpectedTyping>, Error> {
+fn inner_validate_adt_instance(t: &ADTItem, value: &ADTValue) -> Result<Vec<ExpectedTyping>, StructuredADTInstantiationError> {
     match t {
         ADTItem::Hash(t) => {
             match value {
-                ADTValue::Sum {..} => Err(TypingCreationError("Expected Hash, found Sum")),
-                ADTValue::Product(_) => Err(TypingCreationError("Expected Hash, found Product")),
+                ADTValue::Sum {..} => Err(StructuredADTInstantiationError::Mismatch("hash", "sum")),
+                ADTValue::Product(_) => Err(StructuredADTInstantiationError::Mismatch("hash", "product")),
                 ADTValue::Hash(v) => Ok(vec![ExpectedTyping {
                     reference: *v,
                     kind: *t,
@@ -394,11 +397,11 @@ fn inner_validate_adt_instance(t: &ADTItem, value: &ADTValue) -> Result<Vec<Expe
         }
         ADTItem::Sum(subs) => {
             match value {
-                ADTValue::Hash(_) => Err(TypingCreationError("Expected Sum, found Hash")),
-                ADTValue::Product(_) => Err(TypingCreationError("Expected Sum, found Product")),
+                ADTValue::Hash(_) => Err(StructuredADTInstantiationError::Mismatch("sum", "hash")),
+                ADTValue::Product(_) => Err(StructuredADTInstantiationError::Mismatch("sum", "product")),
                 ADTValue::Sum { kind, value: v } => {
                     if *kind as usize >= subs.len() {
-                        Err(TypingCreationError("Sum variant tag out of range"))
+                        Err(StructuredADTInstantiationError::InvalidSumVariant(subs.len(), *kind as usize))
                     } else {
                         inner_validate_adt_instance(&subs[*kind as usize], v)
                     }
@@ -407,11 +410,11 @@ fn inner_validate_adt_instance(t: &ADTItem, value: &ADTValue) -> Result<Vec<Expe
         }
         ADTItem::Product(field_types) => {
             match value {
-                ADTValue::Hash(_) => Err(TypingCreationError("Expected Hash, found Product")),
-                ADTValue::Sum {..} => Err(TypingCreationError("Expected Sum, found Product")),
+                ADTValue::Hash(_) => Err(StructuredADTInstantiationError::Mismatch("product", "hash")),
+                ADTValue::Sum {..} => Err(StructuredADTInstantiationError::Mismatch("product", "sum")),
                 ADTValue::Product(field_values) => {
                     if field_types.len() != field_values.len() {
-                        Err(TypingCreationError("Wrong number of product field values"))
+                        Err(StructuredADTInstantiationError::InvalidProductFieldCount(field_types.len(), field_values.len()))
                     } else {
                         let num = field_types.len();
                         let mut hashes: Vec<ExpectedTyping> = Vec::with_capacity(num);
@@ -521,35 +524,52 @@ impl<'a> Db<'a> {
     }
 }
 
+
+#[derive(Debug, Fail)]
+enum TypingApplicationFailure {
+    #[fail(display = "error parsing sub-field {:?}", _0)]
+    ParseError(Hash),
+    #[fail(display = "sub-field referencing non-existant value {:?}", _0)]
+    DanglingReference(Hash),
+    #[fail(display = "found blob instead of typing for sub-field ({:?})", _0)]
+    UntypedReference(Hash),
+    #[fail(display = "prereq {:?} is of wrong type. Expected {:?}, found {:?}", reference, expected_type, actual_type)]
+    MistypedReference {
+        reference: Hash,
+        expected_type: Hash,
+        actual_type: Hash,
+    }
+}
+
 fn confirm_typing_legit(db: &Db, kind: &ADT, value: &ADTValue) -> Result<Typing, Error> {
-    validate_adt_instance(kind, value).and_then(|maybe| {
-        for expected in maybe.prereqs {
-            match db.get_bytes(expected.reference)? {
-                None => {
-                    return Err(TypingCreationError("sub-field referencing non-existant value"))
-                },
-                Some(bytes) => {
-                    match decode_item(&bytes) {
-                        Err(e) => {
-                            println!("parsing error: {:?}", e);
-                            return Err(Arbitrary("error parsing requisite item from type instance"));
-                        },
-                        Ok((_,LiteralItem::Blob(_))) => {
-                            println!("found blob instead of typing for prereq {:?}", expected.reference);
-                            return Err(Arbitrary("found blob instead of typing for field value"));
-                        },
-                        Ok((_,LiteralItem::Typing(typing))) => {
-                            if typing.type_hash != expected.kind {
-                                println!("prereq of wrong type. Expected {:?}, found {:?}", expected.kind, typing.type_hash);
-                                return Err(Arbitrary("prereq of wrong type"));
-                            }
+    let maybe = validate_adt_instance(kind, value)?;
+    for expected in maybe.prereqs {
+        match db.get_bytes(expected.reference)? {
+            None => {
+                Err(TypingApplicationFailure::DanglingReference(expected.reference))?;
+            },
+            Some(bytes) => {
+                match decode_item(&bytes) {
+                    Err(e) => {
+                        Err(TypingApplicationFailure::ParseError(expected.reference))?;
+                    },
+                    Ok((_,LiteralItem::Blob(_))) => {
+                        Err(TypingApplicationFailure::UntypedReference(expected.reference))?;
+                    },
+                    Ok((_,LiteralItem::Typing(typing))) => {
+                        if typing.type_hash != expected.kind {
+                            Err(TypingApplicationFailure::MistypedReference {
+                                reference: expected.reference,
+                                expected_type: expected.kind,
+                                actual_type: typing.type_hash,
+                            })?;
                         }
                     }
-                },
-            }
+                }
+            },
         }
-        Ok(maybe.typing)
-    })
+    }
+    Ok(maybe.typing)
 }
 
 fn apply_typing_and_store(db: &Db, kind: &ADT, value: &ADTValue) -> Result<Typing, Error> {
@@ -559,7 +579,7 @@ fn apply_typing_and_store(db: &Db, kind: &ADT, value: &ADTValue) -> Result<Typin
 }
 
 
-fn main() -> Result<(), Box<dyn std::error::Error>>{
+fn main() -> Result<(), Error>{
     // let args: Vec<String> = env::args().collect();
     // println!("{:?}", args);
 
