@@ -278,7 +278,7 @@ impl ADTValue {
         }
     }
 
-    pub fn hydrate(kind: &ADT, bytes: &[u8]) -> Result<ADTValue, impl Fail> {
+    pub fn hydrate(kind: &ADT, bytes: &[u8]) -> Result<ADTValue, BinaryADTInstiationError> {
         validate_adt_instance_bytes(kind, bytes)
     }
 }
@@ -310,7 +310,7 @@ pub struct MaybeValid {
 }
 
 #[derive(Debug, Fail)]
-enum BinaryADTInstiationError {
+pub enum BinaryADTInstiationError {
     #[fail(display = "Reached end of blob while parsing {}", _0)]
     Incomplete(&'static str),
     #[fail(display = "Invalid sum variant. There are {} options, but found variant tag {}", _0, _1)]
@@ -364,7 +364,7 @@ fn parse_hash(bytes: &[u8]) -> Result<Hash, BinaryADTInstiationError> {
 }
 
 #[derive(Debug, Fail)]
-enum StructuredADTInstantiationError {
+pub enum StructuredADTInstantiationError {
     #[fail(display = "Expected a {}, found a {}", _0, _1)]
     Mismatch(&'static str, &'static str),
     #[fail(display = "Invalid sum variant. There are {} options, but found variant tag {}", _0, _1)]
@@ -448,6 +448,28 @@ pub enum LiteralItem {
     Typing(Typing),
 }
 
+#[derive(Debug, Fail)]
+pub enum DBFailure {
+    #[fail(display = "Error parsing {:?} from store: {:?}", _0, _1)]
+    ParseError(Hash, String),
+    #[fail(display = "RKV store error: {:?}", _0)]
+    RkvError(#[cause] rkv::error::StoreError),
+    #[fail(display = "Non-blob found in rkv store under hash {:?}", _0)]
+    NonBlob(Hash),
+    #[fail(display = "{:?} wasn't found in the store", _0)]
+    NotFound(Hash),
+    #[fail(display = "A type definition didn't point directly to bytes")]
+    BrokenTypedef,
+    #[fail(display = "A typing's type hash doesn't point to a type")]
+    UntypedTyping,
+    #[fail(display = "The typing {:?} couldn't be interpreted as a {:?}:\n{:?}", hash, target_type, err)]
+    BrokenTyping {
+        hash: Hash,
+        target_type: Hash,
+        #[cause] err: BinaryADTInstiationError,
+    },
+}
+
 pub fn decode_item(bytes: &[u8]) -> IResult<&[u8], LiteralItem> {
     switch!(
         bytes,
@@ -458,63 +480,54 @@ pub fn decode_item(bytes: &[u8]) -> IResult<&[u8], LiteralItem> {
 }
 
 impl<'a> Db<'a> {
-    pub fn put(&self, item: &impl Storable) -> Result<(), Error> {
+    pub fn put(&self, item: &impl Storable) -> Result<(), DBFailure> {
         // FIXME - handle errors properly here
         let mut writer = self.env.write().unwrap();
         if let Err(e) = self.store.put(&mut writer, &item.hash(), &Value::Blob(&item.bytes())) {
-            return Err(RkvError(e));
+            return Err(DBFailure::RkvError(e));
         }
         if let Err(e) = writer.commit() {
-            return Err(RkvError(e));
+            return Err(DBFailure::RkvError(e));
         }
         Ok(())
     }
 
-    pub fn get_bytes(&self, hash: Hash) -> Result<Option<Vec<u8>>, Error> {
+    pub fn get_bytes(&self, hash: Hash) -> Result<Vec<u8>, DBFailure> {
         let reader = self.env.read().expect("reader");
-        let r = self.store.get(&reader, &hash).map_err(|e| { RkvError(e) })?;
+        let r = self.store.get(&reader, &hash).map_err(|e| { DBFailure::RkvError(e) })?;
         match r {
-            Some(Value::Blob(bytes)) => Ok(Some(bytes.into())),
-            Some(_) => {
-                println!("Non-blob retrieved from store...");
-                Ok(None)
-            }
-            None => {
-                println!("Entry missing from store...");
-                Ok(None)
-            }
+            Some(Value::Blob(bytes)) => Ok(bytes.into()),
+            Some(_)                  => Err(DBFailure::NonBlob(hash)),
+            None                     => Err(DBFailure::NotFound(hash)),
         }
     }
 
-    pub fn get(&self, hash: Hash) -> Result<Item, Error> {
-        let bytes = self.get_bytes(hash)?.ok_or(NotFound)?;
+    pub fn get(&self, hash: Hash) -> Result<Item, DBFailure> {
+        let bytes = self.get_bytes(hash)?;
         match decode_item(&bytes) {
-            Err(_) => Err(Arbitrary("invalid bytes found in store")),
+            Err(e) => Err(DBFailure::ParseError(hash, format!("{:?}", e))),
             Ok((more, LiteralItem::Blob(b))) => Ok(Item::Blob(b)),
             Ok((more, LiteralItem::Typing(typing))) => {
-                if more.len() > 0 {
-                    return Err(Arbitrary("Typing with extra bytes"));
-                }
                 if typing.type_hash == BLOB_TYPE_HASH {
                     return Ok(Item::BlobRef(typing.data_hash));
                 } else if typing.type_hash == ADT_TYPE_HASH {
-                    let definition_bytes = self.get_bytes(typing.data_hash)?.ok_or(Arbitrary("couldn't get type definition"))?;
-                    let definition_blob = match decode_item(&definition_bytes) {
-                        Err(e) => Err(Arbitrary("problem parsing type definition bytes")),
-                        Ok((_, LiteralItem::Typing(_))) => Err(Arbitrary("type definition pointed to a typing instead of actual definition")),
-                        Ok((_, LiteralItem::Blob(b))) => Ok(b),
+                    let definition_bytes = self.get_bytes(typing.data_hash)?;
+                    let definition_blob = match decode_item(&definition_bytes).map_err(|e| DBFailure::ParseError(hash, format!("{:?}", e)))? {
+                        (_, LiteralItem::Typing(_)) => Err(DBFailure::BrokenTypedef),
+                        (_, LiteralItem::Blob(b)) => Ok(b),
                     }?;
-                    let (more, kind) = ADT::decode(&definition_blob.bytes).map_err(|_| { Arbitrary("parse error on type definition") })?;
-                    if more.len() > 0 {
-                        return Err(Arbitrary("Type definition was too long"));
-                    }
+                    let (more, kind) = all_consuming(ADT::decode)(&definition_blob.bytes).map_err(|e| DBFailure::ParseError(hash, format!("{:?}", e)))?;
                     return Ok(Item::Type(kind));
                 } else {
                     match self.get(typing.type_hash)? {
-                        Item::Blob(_) | Item::BlobRef(_) | Item::Value(_,_) => Err(FetchError("found non-type instead of type in type_hash of a typing")),
+                        Item::Blob(_) | Item::BlobRef(_) | Item::Value(_,_) => Err(DBFailure::UntypedTyping),
                         Item::Type(kind) => {
-                            let instance_bytes = self.get_bytes(typing.data_hash)?.ok_or(Arbitrary("couldn't get data for data_hash"))?;
-                            let instance = ADTValue::hydrate(&kind, &instance_bytes)?;
+                            let instance_bytes = self.get_bytes(typing.data_hash)?;
+                            let instance = ADTValue::hydrate(&kind, &instance_bytes).map_err(|e| DBFailure::BrokenTyping {
+                                hash,
+                                target_type: typing.type_hash,
+                                err: e,
+                            })?;
                             Ok(Item::Value(kind, instance))
                         },
                     }
@@ -544,29 +557,23 @@ enum TypingApplicationFailure {
 fn confirm_typing_legit(db: &Db, kind: &ADT, value: &ADTValue) -> Result<Typing, Error> {
     let maybe = validate_adt_instance(kind, value)?;
     for expected in maybe.prereqs {
-        match db.get_bytes(expected.reference)? {
-            None => {
-                Err(TypingApplicationFailure::DanglingReference(expected.reference))?;
+        let bytes = db.get_bytes(expected.reference)?;
+        match decode_item(&bytes[..]) {
+            Err(e) => {
+                Err(TypingApplicationFailure::ParseError(expected.reference))?;
             },
-            Some(bytes) => {
-                match decode_item(&bytes) {
-                    Err(e) => {
-                        Err(TypingApplicationFailure::ParseError(expected.reference))?;
-                    },
-                    Ok((_,LiteralItem::Blob(_))) => {
-                        Err(TypingApplicationFailure::UntypedReference(expected.reference))?;
-                    },
-                    Ok((_,LiteralItem::Typing(typing))) => {
-                        if typing.type_hash != expected.kind {
-                            Err(TypingApplicationFailure::MistypedReference {
-                                reference: expected.reference,
-                                expected_type: expected.kind,
-                                actual_type: typing.type_hash,
-                            })?;
-                        }
-                    }
+            Ok((_,LiteralItem::Blob(_))) => {
+                Err(TypingApplicationFailure::UntypedReference(expected.reference))?;
+            },
+            Ok((_,LiteralItem::Typing(typing))) => {
+                if typing.type_hash != expected.kind {
+                    Err(TypingApplicationFailure::MistypedReference {
+                        reference: expected.reference,
+                        expected_type: expected.kind,
+                        actual_type: typing.type_hash,
+                    })?;
                 }
-            },
+            }
         }
     }
     Ok(maybe.typing)
