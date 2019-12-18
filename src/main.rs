@@ -374,9 +374,15 @@ pub enum StructuredADTInstantiationError {
 }
 
 pub fn validate_adt_instance(t: &ADT, value: &ADTValue) -> Result<MaybeValid, StructuredADTInstantiationError> {
+    // assume if you're passing us a type, you've already stored the typing for it.
+    // So, we can just construct the equal typing here to get the hash from.
+    let kinding = Typing {
+        type_hash: ADT_TYPE_HASH,
+        data_hash: t.hash(),
+    };
     Ok(MaybeValid {
         typing: Typing {
-            type_hash: t.hash(),
+            type_hash: kinding.hash(),
             data_hash: value.hash(),
         },
         prereqs: inner_validate_adt_instance(&t.value, value)?
@@ -443,6 +449,7 @@ pub enum Item {
     Value(ADT, ADTValue),
 }
 
+#[derive(Debug)]
 pub enum LiteralItem {
     Blob(Blob),
     Typing(Typing),
@@ -650,7 +657,15 @@ fn main() -> Result<(), Error>{
 
     let typing = apply_typing_and_store(&db, &double_ref_type, &double_instance)?;
 
+    // dbg!(typing.hash());
+    // let bytes = db.get_bytes(typing.hash())?;
+    // dbg!(decode_item(&bytes));
+    // dbg!(double_ref_typing.hash());
+    // dbg!(double_instance.hash());
+    // dbg!(typing);
+
     dbg!(db.get(typing.hash())?);
+
     // match db.get(typing.hash())? {
     //     None => println!("nah"),
     //     Some(bytes) => {
