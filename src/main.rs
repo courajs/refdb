@@ -77,7 +77,7 @@ impl fmt::Debug for Blob {
             for byte in &self.bytes[..16] {
                 write!(f, "{:02x}", byte)?;
             }
-            write!(f, " ... ");
+            write!(f, " ... ")?;
             for byte in &self.bytes[self.bytes.len() - 16..] {
                 write!(f, "{:02x}", byte)?;
             }
@@ -283,9 +283,6 @@ impl ADTValue {
     }
 }
 
-//    = note: expected type `std::result::Result<_, failure::error::Error>`
-//               found type `std::result::Result<_, StructuredADTInstantiationError>`
-//
 impl Storable for ADTValue {
     fn bytes(&self) -> Vec<u8> {
         let mut result = Vec::new();
@@ -375,20 +372,8 @@ pub enum StructuredADTInstantiationError {
     InvalidProductFieldCount(usize, usize),
 }
 
-pub fn validate_adt_instance(t: &ADT, value: &ADTValue) -> Result<MaybeValid, StructuredADTInstantiationError> {
-    // assume if you're passing us a type, you've already stored the typing for it.
-    // So, we can just construct the equal typing here to get the hash from.
-    let kinding = Typing {
-        type_hash: ADT_TYPE_HASH,
-        data_hash: t.hash(),
-    };
-    Ok(MaybeValid {
-        typing: Typing {
-            type_hash: kinding.hash(),
-            data_hash: value.hash(),
-        },
-        prereqs: inner_validate_adt_instance(&t.value, value)?
-    })
+pub fn validate_adt_instance(t: &ADT, value: &ADTValue) -> Result<Vec<ExpectedTyping>, StructuredADTInstantiationError> {
+    inner_validate_adt_instance(&t.value, value)
 }
 
 fn inner_validate_adt_instance(t: &ADTItem, value: &ADTValue) -> Result<Vec<ExpectedTyping>, StructuredADTInstantiationError> {
@@ -544,6 +529,30 @@ impl<'a> Db<'a> {
             }
         }
     }
+
+    pub fn confirm_typings(&self, typings: &[ExpectedTyping]) -> Result<(), Error> {
+        for expected in typings {
+            let bytes = self.get_bytes(expected.reference)?;
+            match decode_item(&bytes[..]) {
+                Err(e) => {
+                    Err(TypingApplicationFailure::ParseError(expected.reference))?;
+                },
+                Ok((_,LiteralItem::Blob(_))) => {
+                    Err(TypingApplicationFailure::UntypedReference(expected.reference))?;
+                },
+                Ok((_,LiteralItem::Typing(typing))) => {
+                    if typing.type_hash != expected.kind {
+                        Err(TypingApplicationFailure::MistypedReference {
+                            reference: expected.reference,
+                            expected_type: expected.kind,
+                            actual_type: typing.type_hash,
+                        })?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 
@@ -561,37 +570,6 @@ enum TypingApplicationFailure {
         expected_type: Hash,
         actual_type: Hash,
     }
-}
-
-fn confirm_typing_legit(db: &Db, kind: &ADT, value: &ADTValue) -> Result<Typing, Error> {
-    let maybe = validate_adt_instance(kind, value)?;
-    for expected in maybe.prereqs {
-        let bytes = db.get_bytes(expected.reference)?;
-        match decode_item(&bytes[..]) {
-            Err(e) => {
-                Err(TypingApplicationFailure::ParseError(expected.reference))?;
-            },
-            Ok((_,LiteralItem::Blob(_))) => {
-                Err(TypingApplicationFailure::UntypedReference(expected.reference))?;
-            },
-            Ok((_,LiteralItem::Typing(typing))) => {
-                if typing.type_hash != expected.kind {
-                    Err(TypingApplicationFailure::MistypedReference {
-                        reference: expected.reference,
-                        expected_type: expected.kind,
-                        actual_type: typing.type_hash,
-                    })?;
-                }
-            }
-        }
-    }
-    Ok(maybe.typing)
-}
-
-fn apply_typing_and_store(db: &Db, kind: &ADT, value: &ADTValue) -> Result<Typing, Error> {
-    let t = confirm_typing_legit(db, kind, value)?;
-    db.put(&t)?;
-    Ok(t)
 }
 
 
@@ -657,7 +635,17 @@ fn main() -> Result<(), Error>{
     db.put(&double_ref_typing)?;
     db.put(&double_instance)?;
 
-    let typing = apply_typing_and_store(&db, &double_ref_type, &double_instance)?;
+    let confirmations = validate_adt_instance(&double_ref_type, &double_instance)?;
+    db.confirm_typings(&confirmations)?;
+
+    let typing = Typing {
+        type_hash: double_ref_typing.hash(),
+        data_hash: double_instance.hash(),
+    };
+
+    db.put(&typing)?;
+
+    // let typing = apply_typing_and_store(&db, &double_ref_type, &double_instance)?;
 
     // dbg!(typing.hash());
     // let bytes = db.get_bytes(typing.hash())?;
@@ -672,7 +660,7 @@ fn main() -> Result<(), Error>{
             if let ADTValue::Hash(h) = b {
                 if let Item::BlobRef(h2) = db.get(h)? {
                     if let Item::Blob(bb) = db.get(h2)? {
-                        dbg!(std::str::from_utf8(&bb.bytes));
+                        dbg!(std::str::from_utf8(&bb.bytes))?;
                     }
                 }
             }
