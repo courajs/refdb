@@ -317,6 +317,8 @@ pub enum BinaryADTInstiationError {
     InvalidSumVariant(usize, usize),
     #[fail(display = "Excess data at end of blob. Finished parsing with {} bytes remaining out of {} total", _0, _1)]
     Excess(usize, usize),
+    #[fail(display = "A type's data_hash must point to a blob")]
+    WrongType,
 }
 
 pub fn validate_adt_instance_bytes(t: &ADT, bytes: &[u8]) -> Result<ADTValue, BinaryADTInstiationError> {
@@ -469,7 +471,7 @@ pub enum DBFailure {
     BrokenTypedef,
     #[fail(display = "A typing's type hash doesn't point to a type")]
     UntypedTyping,
-    #[fail(display = "The typing {:?} couldn't be interpreted as a {:?}:\n{:?}", hash, target_type, err)]
+    #[fail(display = "The typing {:?} couldn't be interpreted as a {:?}:\n{}", hash, target_type, err)]
     BrokenTyping {
         hash: Hash,
         target_type: Hash,
@@ -530,7 +532,7 @@ impl<'a> Db<'a> {
                         Item::Blob(_) | Item::BlobRef(_) | Item::Value(_,_) => Err(DBFailure::UntypedTyping),
                         Item::Type(kind) => {
                             let instance_bytes = self.get_bytes(typing.data_hash)?;
-                            let instance = ADTValue::hydrate(&kind, &instance_bytes).map_err(|e| DBFailure::BrokenTyping {
+                            let instance = ADTValue::hydrate(&kind, &instance_bytes[1..]).map_err(|e| DBFailure::BrokenTyping {
                                 hash,
                                 target_type: typing.type_hash,
                                 err: e,
@@ -664,7 +666,20 @@ fn main() -> Result<(), Error>{
     // dbg!(double_instance.hash());
     // dbg!(typing);
 
-    dbg!(db.get(typing.hash())?);
+    if let Item::Value(kind, ADTValue::Product(subs)) = db.get(typing.hash())? {
+        dbg!(kind);
+        for b in subs {
+            if let ADTValue::Hash(h) = b {
+                if let Item::BlobRef(h2) = db.get(h)? {
+                    if let Item::Blob(bb) = db.get(h2)? {
+                        dbg!(std::str::from_utf8(&bb.bytes));
+                    }
+                }
+            }
+        }
+        dbg!(blob1.hash());
+        dbg!(blob2.hash());
+    }
 
     // match db.get(typing.hash())? {
     //     None => println!("nah"),
