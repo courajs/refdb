@@ -585,6 +585,7 @@ enum TypingApplicationFailure {
 
 // recursive adt
 // allows cyclical references
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RADT {
     pub uniqueness: [u8; 16],
     pub items: Vec<RADTItem>,
@@ -597,6 +598,17 @@ pub enum RADTItem {
     Sum(Vec<RADTItem>),
     Product(Vec<RADTItem>),
     CycleRef(usize),
+}
+
+impl RADTItem {
+    fn update_refs(&mut self, map: &[usize]) {
+        match self {
+            RADTItem::ExternalType(_) => {},
+            RADTItem::CycleRef(n) => { *n = map[*n]; },
+            RADTItem::Sum(items) => { for sub in items { sub.update_refs(map); } },
+            RADTItem::Product(items) => { for sub in items { sub.update_refs(map); } },
+        }
+    }
 }
 
 impl RADT {
@@ -615,6 +627,10 @@ impl RADT {
         for i in 0..len {
             self.items[sort_mapping[i]] = orig[i].clone()
             // self.items[i] = orig[sort_mapping[i]].clone(); //.map_refs(sort_mapping);
+        }
+
+        for item in self.items.iter_mut() {
+            item.update_refs(&sort_mapping);
         }
 
         // self.items.sort_by_key(|i| sort_mapping[*i]);
@@ -657,8 +673,58 @@ fn test_normalize_ordering() {
 }
 
 #[test]
-fn test_normalize_mapping() {
-    //db
+fn test_normalize() {
+    use RADTItem::*;
+    // dbg!(hash_slice(&CycleRef(0).zero_bytes()));
+    // > sha-256:53d4918ee44c2cb4ce8ba669bee35ff4f39b53e91bd79af80a841f63f8578faa
+    // dbg!(hash_slice(&Product(vec![ExternalType(BLOB_TYPE_HASH), CycleRef(2)]).zero_bytes()));
+    // > sha-256:a6a2da7d0e5f2451580db376a5f907bb9522a1e3730dd59680770461e371cf28
+    // dbg!(hash_slice(&Product(vec![CycleRef(0), ExternalType(BLOB_TYPE_HASH)]).zero_bytes()));
+    // > sha-256:50927c8547f38270e368e9c4cc5f2fd17d1d1a9ccb3d7d092b051cc8946774c8
+    // dbg!(hash_slice(&Product(vec![CycleRef(1), CycleRef(2)]).zero_bytes()));
+    // > sha-256:b5a18419a727b19bdcd967f99b0de7997da3646dd3afa878e43dd856249ad5db
+
+
+    let mut r = RADT {
+        uniqueness: [0; 16],
+        items: vec![
+            CycleRef(0),
+            Product(vec![ExternalType(BLOB_TYPE_HASH), CycleRef(2)]),
+            Product(vec![CycleRef(0), ExternalType(BLOB_TYPE_HASH)]),
+            Product(vec![CycleRef(1), CycleRef(2)]),
+        ],
+    };
+    let expected = RADT {
+        uniqueness: [0; 16],
+        items: vec![
+            Product(vec![CycleRef(1), ExternalType(BLOB_TYPE_HASH)]),
+            CycleRef(1),
+            Product(vec![ExternalType(BLOB_TYPE_HASH), CycleRef(0)]),
+            Product(vec![CycleRef(2), CycleRef(0)]),
+        ],
+    };
+
+    r.normalize();
+    assert_eq!(r, expected);
+}
+
+#[test]
+fn test_radt_mapping() {
+    let mut r = RADTItem::Product(vec![
+                RADTItem::CycleRef(0),
+                RADTItem::CycleRef(1),
+                RADTItem::CycleRef(2),
+                RADTItem::CycleRef(3),
+    ]);
+
+    let expected = RADTItem::Product(vec![
+                    RADTItem::CycleRef(2),
+                    RADTItem::CycleRef(1),
+                    RADTItem::CycleRef(3),
+                    RADTItem::CycleRef(0),
+    ]);
+    r.update_refs(&vec![2, 1, 3, 0]);
+    assert_eq!(r, expected);
 }
 
 fn transpose(v: &mut Vec<usize>) {
