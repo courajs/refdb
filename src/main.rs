@@ -24,7 +24,7 @@ use nom::{
 };
 
 // Basic persistence primitives
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Hash(pub [u8; 32]);
 impl AsRef<[u8]> for Hash {
     fn as_ref(&self) -> &[u8] {
@@ -38,6 +38,14 @@ impl Hash {
         val.copy_from_slice(value);
         Hash(val)
     }
+}
+
+fn hash_slice(bytes: &[u8]) -> Hash {
+    let mut val: [u8; 32] = Default::default();
+    let mut hasher = Sha3_256::new();
+    hasher.input(bytes);
+    val.copy_from_slice(hasher.result().as_ref());
+    Hash(val)
 }
 
 impl fmt::Debug for Hash {
@@ -423,6 +431,8 @@ fn inner_validate_adt_instance(t: &ADTItem, value: &ADTValue) -> Result<Vec<Expe
     }
 }
 
+
+
 pub struct Db<'a> {
     pub env: &'a rkv::Rkv,
     pub store: &'a rkv::SingleStore,
@@ -569,6 +579,170 @@ enum TypingApplicationFailure {
         reference: Hash,
         expected_type: Hash,
         actual_type: Hash,
+    }
+}
+
+
+// recursive adt
+// allows cyclical references
+pub struct RADT {
+    pub uniqueness: [u8; 16],
+    pub items: Vec<RADTItem>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RADTItem {
+    // Reference to a separate ADT or RADT
+    ExternalType(Hash),
+    Sum(Vec<RADTItem>),
+    Product(Vec<RADTItem>),
+    CycleRef(usize),
+}
+
+impl RADT {
+    fn normalize(&mut self) {
+        // theoretically there should be a much better impl with no clones and simple swaps
+        // but that is for another day
+        let len = self.items.len();
+
+        let mut sort_mapping: Vec<usize> = (0..len).collect();
+        sort_mapping.sort_by_cached_key(|i| hash_slice(&self.items[*i].zero_bytes()));
+        transpose(&mut sort_mapping);
+
+        // dbg!(&sort_mapping);
+
+        let orig = self.items.clone();
+        for i in 0..len {
+            self.items[sort_mapping[i]] = orig[i].clone()
+            // self.items[i] = orig[sort_mapping[i]].clone(); //.map_refs(sort_mapping);
+        }
+
+        // self.items.sort_by_key(|i| sort_mapping[*i]);
+
+        // get hashes for all zeroed items, to find order
+        // map all interior cycle refs to the new order, and reorder the items at the top level
+    }
+}
+
+#[test]
+fn test_normalize_ordering() {
+    // dbg!(hash_slice(&RADTItem::Sum(vec![RADTItem::ExternalType(ADT_TYPE_HASH)]).zero_bytes()));
+    // > sha-256:328709287d4c4e0274c0fadb991a4d4d9de27751bc59ae53d984f06d37da9048
+    // dbg!(hash_slice(&RADTItem::Sum(vec![RADTItem::Sum(vec![RADTItem::ExternalType(ADT_TYPE_HASH)])]).zero_bytes()));
+    // > sha-256:8645e4d6364050bc948c570f2260a4e55db17e22f26e5036520ab04a9e60d5b0
+    // hash_slice(&RADTItem::ExternalType(ADT_TYPE_HASH).zero_bytes())
+    // > sha-256:aa206544e4e51017b313c228a4e8b42035bba61f8a8e87abd5e1135dc919fa7c
+    // hash_slice(&RADTItem::ExternalType(BLOB_TYPE_HASH).zero_bytes())
+    // > sha-256:dc33296e4d20f0ef35ff9fd449e23ebbaa5a049a17779db3c2fe194b499aaf74
+
+    let a = RADTItem::Sum(vec![RADTItem::ExternalType(ADT_TYPE_HASH)]);
+    let b = RADTItem::Sum(vec![RADTItem::Sum(vec![RADTItem::ExternalType(ADT_TYPE_HASH)])]);
+    let c = RADTItem::ExternalType(ADT_TYPE_HASH);
+    let d = RADTItem::ExternalType(BLOB_TYPE_HASH);
+
+    let mut r = RADT {
+        uniqueness: [0; 16],
+        items: vec![
+            d.clone(),
+            a.clone(),
+            b.clone(),
+            c.clone(),
+        ],
+    };
+    let sorted = vec![a.clone(), b.clone(), c.clone(), d.clone()];
+    r.normalize();
+    assert_eq!(r.items, sorted);
+    r.normalize();
+    assert_eq!(r.items, sorted);
+}
+
+#[test]
+fn test_normalize_mapping() {
+    //db
+}
+
+fn transpose(v: &mut Vec<usize>) {
+    let copy = v.clone();
+    for (i, val) in copy.into_iter().enumerate() {
+        v[val] = i
+    }
+}
+
+#[test]
+fn test_transpose() {
+    let mut v = vec![3, 1, 0, 2];
+    transpose(&mut v);
+    assert_eq!(v, vec![2, 1, 3, 0])
+}
+
+impl RADTItem {
+    fn map_cycle_indices(&mut self, mapping: &Vec<usize>) {
+    }
+
+    fn zero_bytes(&self) -> Vec<u8> {
+        let mut result = Vec::new();
+        match self {
+            RADTItem::ExternalType(h) => {
+                result.push(0);
+                result.extend_from_slice(&h.0[..]);
+                result
+            },
+            RADTItem::Sum(items) => {
+                // TODO: maybe sort these somehow for easier structural comparison?
+                result.push(1);
+                result.extend_from_slice(&items.len().to_be_bytes());
+                for item in items {
+                    result.extend_from_slice(&item.zero_bytes());
+                }
+                result
+            },
+            RADTItem::Product(items) => {
+                result.push(2);
+                result.extend_from_slice(&items.len().to_be_bytes());
+                for item in items {
+                    result.extend_from_slice(&item.zero_bytes());
+                }
+                result
+            },
+            RADTItem::CycleRef(index) => {
+                result.push(3);
+                result.extend_from_slice(&(0 as usize).to_be_bytes());
+                result
+            },
+        }
+    }
+
+    fn bytes(&self) -> Vec<u8> {
+        let mut result = Vec::new();
+        match self {
+            RADTItem::ExternalType(h) => {
+                result.push(0);
+                result.extend_from_slice(&h.0[..]);
+                result
+            },
+            RADTItem::Sum(items) => {
+                // TODO: maybe sort these somehow for easier structural comparison?
+                result.push(1);
+                result.extend_from_slice(&items.len().to_be_bytes());
+                for item in items {
+                    result.extend_from_slice(&item.bytes());
+                }
+                result
+            },
+            RADTItem::Product(items) => {
+                result.push(2);
+                result.extend_from_slice(&items.len().to_be_bytes());
+                for item in items {
+                    result.extend_from_slice(&item.bytes());
+                }
+                result
+            },
+            RADTItem::CycleRef(index) => {
+                result.push(3);
+                result.extend_from_slice(&index.to_be_bytes());
+                result
+            },
+        }
     }
 }
 
