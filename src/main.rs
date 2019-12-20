@@ -600,17 +600,6 @@ pub enum RADTItem {
     CycleRef(usize),
 }
 
-impl RADTItem {
-    fn update_refs(&mut self, map: &[usize]) {
-        match self {
-            RADTItem::ExternalType(_) => {},
-            RADTItem::CycleRef(n) => { *n = map[*n]; },
-            RADTItem::Sum(items) => { for sub in items { sub.update_refs(map); } },
-            RADTItem::Product(items) => { for sub in items { sub.update_refs(map); } },
-        }
-    }
-}
-
 impl RADT {
     fn normalize(&mut self) {
         // theoretically there should be a much better impl with no clones and simple swaps
@@ -624,52 +613,14 @@ impl RADT {
         // dbg!(&sort_mapping);
 
         let orig = self.items.clone();
-        for i in 0..len {
-            self.items[sort_mapping[i]] = orig[i].clone()
-            // self.items[i] = orig[sort_mapping[i]].clone(); //.map_refs(sort_mapping);
+        for (i, item) in orig.into_iter().enumerate() {
+            self.items[sort_mapping[i]] = item;
         }
 
         for item in self.items.iter_mut() {
             item.update_refs(&sort_mapping);
         }
-
-        // self.items.sort_by_key(|i| sort_mapping[*i]);
-
-        // get hashes for all zeroed items, to find order
-        // map all interior cycle refs to the new order, and reorder the items at the top level
     }
-}
-
-#[test]
-fn test_normalize_ordering() {
-    // dbg!(hash_slice(&RADTItem::Sum(vec![RADTItem::ExternalType(ADT_TYPE_HASH)]).zero_bytes()));
-    // > sha-256:328709287d4c4e0274c0fadb991a4d4d9de27751bc59ae53d984f06d37da9048
-    // dbg!(hash_slice(&RADTItem::Sum(vec![RADTItem::Sum(vec![RADTItem::ExternalType(ADT_TYPE_HASH)])]).zero_bytes()));
-    // > sha-256:8645e4d6364050bc948c570f2260a4e55db17e22f26e5036520ab04a9e60d5b0
-    // hash_slice(&RADTItem::ExternalType(ADT_TYPE_HASH).zero_bytes())
-    // > sha-256:aa206544e4e51017b313c228a4e8b42035bba61f8a8e87abd5e1135dc919fa7c
-    // hash_slice(&RADTItem::ExternalType(BLOB_TYPE_HASH).zero_bytes())
-    // > sha-256:dc33296e4d20f0ef35ff9fd449e23ebbaa5a049a17779db3c2fe194b499aaf74
-
-    let a = RADTItem::Sum(vec![RADTItem::ExternalType(ADT_TYPE_HASH)]);
-    let b = RADTItem::Sum(vec![RADTItem::Sum(vec![RADTItem::ExternalType(ADT_TYPE_HASH)])]);
-    let c = RADTItem::ExternalType(ADT_TYPE_HASH);
-    let d = RADTItem::ExternalType(BLOB_TYPE_HASH);
-
-    let mut r = RADT {
-        uniqueness: [0; 16],
-        items: vec![
-            d.clone(),
-            a.clone(),
-            b.clone(),
-            c.clone(),
-        ],
-    };
-    let sorted = vec![a.clone(), b.clone(), c.clone(), d.clone()];
-    r.normalize();
-    assert_eq!(r.items, sorted);
-    r.normalize();
-    assert_eq!(r.items, sorted);
 }
 
 #[test]
@@ -742,9 +693,6 @@ fn test_transpose() {
 }
 
 impl RADTItem {
-    fn map_cycle_indices(&mut self, mapping: &Vec<usize>) {
-    }
-
     fn zero_bytes(&self) -> Vec<u8> {
         let mut result = Vec::new();
         match self {
@@ -808,6 +756,15 @@ impl RADTItem {
                 result.extend_from_slice(&index.to_be_bytes());
                 result
             },
+        }
+    }
+
+    fn update_refs(&mut self, map: &[usize]) {
+        match self {
+            RADTItem::ExternalType(_) => {},
+            RADTItem::CycleRef(n) => { *n = map[*n]; },
+            RADTItem::Sum(items) => { for sub in items { sub.update_refs(map); } },
+            RADTItem::Product(items) => { for sub in items { sub.update_refs(map); } },
         }
     }
 }
