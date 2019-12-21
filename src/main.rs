@@ -591,6 +591,36 @@ pub struct RADT {
     pub items: Vec<RADTItem>,
 }
 
+impl Storable for RADT {
+    fn bytes(&self) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.push(0);
+        v.extend_from_slice(&self.uniqueness);
+        v.extend_from_slice(&self.items.len().to_be_bytes());
+        for item in self.items.iter() {
+            v.extend_from_slice(&item.bytes());
+        }
+        v
+    }
+}
+
+impl Decodable for RADT {
+    fn decode(bytes: &[u8]) -> IResult<&[u8], RADT> {
+        let (bytes, _) = take(1u8)(bytes)?;
+        let (more, uniq) = take(16u8)(bytes)?;
+        let (rest, items) = length_count!(more, be_u64, RADTItem::decode)?;
+        // all_consuming(noop)(rest)?;
+
+        let mut uniqueness = [0;16];
+        uniqueness.copy_from_slice(uniq);
+        Ok((more, RADT { uniqueness, items }))
+    }
+}
+
+fn noop(b: &[u8]) -> IResult<&[u8], ()> {
+    Ok((b, ()))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RADTItem {
     // Reference to a separate ADT or RADT
@@ -598,6 +628,66 @@ pub enum RADTItem {
     Sum(Vec<RADTItem>),
     Product(Vec<RADTItem>),
     CycleRef(usize),
+}
+
+
+fn radt_decode_external(bytes: &[u8]) -> IResult<&[u8], RADTItem> {
+    map(take(32u8), |b| { RADTItem::ExternalType(Hash::sure_from(b)) })(bytes)
+}
+fn radt_decode_sum(bytes: &[u8]) -> IResult<&[u8], RADTItem> {
+    map(radt_decode_items, |items| { RADTItem::Sum(items) })(bytes)
+}
+fn radt_decode_product(bytes: &[u8]) -> IResult<&[u8], RADTItem> {
+    map(radt_decode_items, |items| { RADTItem::Product(items) })(bytes)
+}
+fn radt_decode_items(bytes: &[u8]) -> IResult<&[u8], Vec<RADTItem>> {
+    length_count!(bytes, be_u64, RADTItem::decode)
+}
+fn radt_decode_cycle_ref(bytes: &[u8]) -> IResult<&[u8], RADTItem> {
+    let (rest, i) = be_u64(bytes)?;
+    Ok((rest, RADTItem::CycleRef(i as usize)))
+}
+
+impl Decodable for RADTItem {
+    fn decode(bytes: &[u8]) -> IResult<&[u8], RADTItem> {
+        switch!(
+            bytes,
+            be_u8,
+            0 => call!(radt_decode_external)
+            | 1 => call!(radt_decode_sum)
+            | 2 => call!(radt_decode_product)
+            | 3 => call!(radt_decode_cycle_ref)
+        )
+    }
+}
+
+#[test]
+fn test_radt_item_recode() {
+    let item = RADTItem::Product(vec![
+        RADTItem::CycleRef(12),
+        RADTItem::CycleRef(12),
+    ]);
+    let bytes = item.bytes();
+    let (empty, item2) = RADTItem::decode(&bytes).expect("hey");
+    assert_eq!(item, item2);
+}
+
+#[test]
+fn test_radt_recode() {
+    let blob_list = RADT {
+        uniqueness: [0; 16],
+        items: vec![
+            RADTItem::Product(vec![]),
+            RADTItem::Product(vec![
+                  RADTItem::ExternalType(BLOB_TYPE_HASH),
+                  RADTItem::CycleRef(0),
+            ]),
+        ],
+    };
+
+    let bytes = blob_list.bytes();
+    let (_, rehydrated) = RADT::decode(&bytes).expect("should parse the encoded radt");
+    assert_eq!(rehydrated, blob_list);
 }
 
 impl RADT {
