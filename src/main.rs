@@ -308,12 +308,6 @@ pub struct ExpectedTyping {
     pub kind: Hash,
 }
 
-#[derive(Debug)]
-pub struct MaybeValid {
-    pub typing: Typing,
-    pub prereqs: Vec<ExpectedTyping>,
-}
-
 #[derive(Debug, Fail)]
 pub enum BinaryADTInstiationError {
     #[fail(display = "Reached end of blob while parsing {}", _0)]
@@ -620,6 +614,50 @@ impl Decodable for RADT {
 fn noop(b: &[u8]) -> IResult<&[u8], ()> {
     Ok((b, ()))
 }
+
+pub enum RADTValue {
+    Hash(Hash),
+    Sum {
+        kind: u8,
+        value: Box<RADTValue>,
+    },
+    Product(Vec<RADTValue>),
+}
+
+pub struct RADTRef {
+    def: Hash,
+    index: usize,
+}
+
+pub enum RADTExpected {
+    RADT(RADTRef),
+    ADT(Hash),
+}
+
+#[derive(Debug, Fail)]
+pub enum StructuredRADTInstantiationError {
+    #[fail(display = "Expected a {}, found a {}", _0, _1)]
+    Mismatch(&'static str, &'static str),
+    #[fail(display = "Invalid sum variant. There are {} options, but found variant tag {}", _0, _1)]
+    InvalidSumVariant(usize, usize),
+    #[fail(display = "Invalid number of product fields. Expected {}, found {}", _0, _1)]
+    InvalidProductFieldCount(usize, usize),
+    #[fail(display = "Invalid cycle variant. There are {} options, but found reference to item {}", _0, _1)]
+    InvalidCycleRef(usize, usize),
+}
+
+pub fn validate_radt_instance(t: &RADT, index: usize, value: &RADTValue) -> Result<Vec<RADTExpected>, StructuredRADTInstantiationError> {
+    if index >= t.items.len() {
+        Err(StructuredRADTInstantiationError::InvalidCycleRef(t.items.len(), index))
+    } else {
+        inner_validate_radt_instance(&t.items, &t.items[index], value)
+    }
+}
+
+fn inner_validate_radt_instance(base_items: &[RADTItem], current_item: &RADTItem, value: &RADTValue) -> Result<Vec<RADTExpected>, StructuredRADTInstantiationError> {
+    Ok(Vec::new())
+}
+
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RADTItem {
