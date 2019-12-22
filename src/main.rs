@@ -624,14 +624,11 @@ pub enum RADTValue {
     Product(Vec<RADTValue>),
 }
 
-pub struct RADTRef {
+#[derive(Debug, PartialEq, Eq)]
+pub struct RADTExpected {
     def: Hash,
     index: usize,
-}
-
-pub enum RADTExpected {
-    RADT(RADTRef),
-    ADT(Hash),
+    value: Hash,
 }
 
 #[derive(Debug, Fail)]
@@ -655,22 +652,106 @@ pub fn validate_radt_instance(t: &RADT, index: usize, value: &RADTValue) -> Resu
 }
 
 fn inner_validate_radt_instance(base_items: &[RADTItem], current_item: &RADTItem, value: &RADTValue) -> Result<Vec<RADTExpected>, StructuredRADTInstantiationError> {
-    Ok(Vec::new())
+    match current_item {
+        RADTItem::ExternalType(def, idx) => {
+            match value {
+                RADTValue::Sum{..} => Err(StructuredRADTInstantiationError::Mismatch("hash", "sum")),
+                RADTValue::Product(_) => Err(StructuredRADTInstantiationError::Mismatch("hash", "product")),
+                RADTValue::Hash(val) => Ok(vec![RADTExpected { def: *def, index: *idx, value: *val}]),
+            }
+        },
+        RADTItem::Sum(subs) => {
+            match value {
+                RADTValue::Hash(_) => Err(StructuredRADTInstantiationError::Mismatch("sum", "hash")),
+                RADTValue::Product(_) => Err(StructuredRADTInstantiationError::Mismatch("sum", "product")),
+                RADTValue::Sum {kind, value} => {
+                    if (*kind as usize) >= subs.len() {
+                        Err(StructuredRADTInstantiationError::InvalidSumVariant(subs.len(), *kind as usize))
+                    } else {
+                        inner_validate_radt_instance(base_items, &subs[*kind as usize], value)
+                    }
+                },
+            }
+        }
+        RADTItem::Product(subs) => {
+            match value {
+                RADTValue::Hash(_) => Err(StructuredRADTInstantiationError::Mismatch("product", "hash")),
+                RADTValue::Sum {..} => Err(StructuredRADTInstantiationError::Mismatch("product", "sum")),
+                RADTValue::Product(values) => {
+                    if subs.len() != values.len() {
+                        Err(StructuredRADTInstantiationError::InvalidProductFieldCount(subs.len(), values.len()))
+                    } else {
+                        let mut results = Vec::new();
+                        for i in 0..subs.len() {
+                            let prereqs = inner_validate_radt_instance(base_items, &subs[i], &values[i])?;
+                            results.extend(prereqs);
+                        }
+                        Ok(results)
+                    }
+                },
+            }
+        },
+        RADTItem::CycleRef(idx) => {
+            if *idx>= base_items.len() {
+                Err(StructuredRADTInstantiationError::InvalidCycleRef(base_items.len(), *idx))
+            } else {
+                inner_validate_radt_instance(base_items, &base_items[*idx], value)
+            }
+        }
+    }
+}
+
+#[test]
+fn test_validate() {
+    let list = RADTItem::Sum(vec![RADTItem::CycleRef(1), RADTItem::CycleRef(2)]);
+    let nil = RADTItem::Product(Vec::new());
+    let cons = RADTItem::Product(vec![
+                    RADTItem::ExternalType(BLOB_TYPE_HASH, 12),
+                    RADTItem::CycleRef(0),
+    ]);
+    let blob_list = RADT {
+        uniqueness: [0; 16],
+        items: vec![list, nil, cons],
+    };
+
+    let value = RADTValue::Sum{
+        kind: 1,
+        value: Box::new(
+            RADTValue::Product(vec![
+                RADTValue::Hash(ADT_TYPE_HASH),
+                RADTValue::Sum {
+                    kind: 0,
+                    value: Box::new(RADTValue::Product(Vec::new())),
+                },
+            ])
+        ),
+    };
+
+    let prereqs = validate_radt_instance(&blob_list, 0, &value).expect("should validate");
+
+    assert_eq!(prereqs, vec![
+               RADTExpected {
+                   def: BLOB_TYPE_HASH,
+                   index: 12,
+                   value: ADT_TYPE_HASH,
+               }]);
 }
 
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RADTItem {
-    // Reference to a separate ADT or RADT
-    ExternalType(Hash),
+    // Reference to a separate RADT - the hash and cycle index.
+    ExternalType(Hash, usize),
     Sum(Vec<RADTItem>),
     Product(Vec<RADTItem>),
     CycleRef(usize),
 }
 
-
 fn radt_decode_external(bytes: &[u8]) -> IResult<&[u8], RADTItem> {
-    map(take(32u8), |b| { RADTItem::ExternalType(Hash::sure_from(b)) })(bytes)
+    map(tuple((
+        map(take(32u8), Hash::sure_from),
+        map(take(8u8), |b: &[u8]| usize::from_be_bytes(b.try_into().unwrap())),
+    )), |(h, idx)| RADTItem::ExternalType(h, idx))(bytes)
 }
 fn radt_decode_sum(bytes: &[u8]) -> IResult<&[u8], RADTItem> {
     map(radt_decode_items, |items| { RADTItem::Sum(items) })(bytes)
@@ -717,7 +798,7 @@ fn test_radt_recode() {
         items: vec![
             RADTItem::Product(vec![]),
             RADTItem::Product(vec![
-                  RADTItem::ExternalType(BLOB_TYPE_HASH),
+                  RADTItem::ExternalType(BLOB_TYPE_HASH, 0),
                   RADTItem::CycleRef(0),
             ]),
         ],
@@ -756,30 +837,32 @@ fn test_normalize() {
     use RADTItem::*;
     // dbg!(hash_slice(&CycleRef(0).zero_bytes()));
     // > sha-256:53d4918ee44c2cb4ce8ba669bee35ff4f39b53e91bd79af80a841f63f8578faa
-    // dbg!(hash_slice(&Product(vec![ExternalType(BLOB_TYPE_HASH), CycleRef(2)]).zero_bytes()));
-    // > sha-256:a6a2da7d0e5f2451580db376a5f907bb9522a1e3730dd59680770461e371cf28
-    // dbg!(hash_slice(&Product(vec![CycleRef(0), ExternalType(BLOB_TYPE_HASH)]).zero_bytes()));
-    // > sha-256:50927c8547f38270e368e9c4cc5f2fd17d1d1a9ccb3d7d092b051cc8946774c8
+    // dbg!(hash_slice(&Product(vec![ExternalType(BLOB_TYPE_HASH, 0), CycleRef(2)]).zero_bytes()));
+    // > sha-256:d785756371cd213bc86a7924489907934c5ff5f5f03568ac5deb457f80d2c196
+    // dbg!(hash_slice(&Product(vec![CycleRef(0), ExternalType(BLOB_TYPE_HASH, 0)]).zero_bytes()));
+    // > sha-256:089f61699620a1897360213f2f96626563bbb49c6c6235b32b9ac0c1f74bec16
     // dbg!(hash_slice(&Product(vec![CycleRef(1), CycleRef(2)]).zero_bytes()));
     // > sha-256:b5a18419a727b19bdcd967f99b0de7997da3646dd3afa878e43dd856249ad5db
+    //
+    // 2, 0, 3, 1
 
 
     let mut r = RADT {
         uniqueness: [0; 16],
         items: vec![
             CycleRef(0),
-            Product(vec![ExternalType(BLOB_TYPE_HASH), CycleRef(2)]),
-            Product(vec![CycleRef(0), ExternalType(BLOB_TYPE_HASH)]),
+            Product(vec![ExternalType(BLOB_TYPE_HASH, 0), CycleRef(2)]),
+            Product(vec![CycleRef(0), ExternalType(BLOB_TYPE_HASH, 0)]),
             Product(vec![CycleRef(1), CycleRef(2)]),
         ],
     };
     let expected = RADT {
         uniqueness: [0; 16],
         items: vec![
-            Product(vec![CycleRef(1), ExternalType(BLOB_TYPE_HASH)]),
+            Product(vec![CycleRef(1), ExternalType(BLOB_TYPE_HASH, 0)]),
             CycleRef(1),
-            Product(vec![ExternalType(BLOB_TYPE_HASH), CycleRef(0)]),
-            Product(vec![CycleRef(2), CycleRef(0)]),
+            Product(vec![CycleRef(3), CycleRef(0)]),
+            Product(vec![ExternalType(BLOB_TYPE_HASH, 0), CycleRef(0)]),
         ],
     };
 
@@ -824,9 +907,10 @@ impl RADTItem {
     fn zero_bytes(&self) -> Vec<u8> {
         let mut result = Vec::new();
         match self {
-            RADTItem::ExternalType(h) => {
+            RADTItem::ExternalType(h, idx) => {
                 result.push(0);
                 result.extend_from_slice(&h.0[..]);
+                result.extend_from_slice(&idx.to_be_bytes());
                 result
             },
             RADTItem::Sum(items) => {
@@ -857,9 +941,10 @@ impl RADTItem {
     fn bytes(&self) -> Vec<u8> {
         let mut result = Vec::new();
         match self {
-            RADTItem::ExternalType(h) => {
+            RADTItem::ExternalType(h, idx) => {
                 result.push(0);
                 result.extend_from_slice(&h.0[..]);
+                result.extend_from_slice(&idx.to_be_bytes());
                 result
             },
             RADTItem::Sum(items) => {
@@ -889,7 +974,7 @@ impl RADTItem {
 
     fn update_refs(&mut self, map: &[usize]) {
         match self {
-            RADTItem::ExternalType(_) => {},
+            RADTItem::ExternalType(_,_) => {},
             RADTItem::CycleRef(n) => { *n = map[*n]; },
             RADTItem::Sum(items) => { for sub in items { sub.update_refs(map); } },
             RADTItem::Product(items) => { for sub in items { sub.update_refs(map); } },
