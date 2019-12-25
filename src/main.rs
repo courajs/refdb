@@ -55,7 +55,14 @@ impl fmt::Debug for Hash {
 }
 
 pub trait Storable {
-    fn bytes(&self) -> Vec<u8>;
+    fn bytes_into(&self, v: &mut Vec<u8>);
+
+    fn bytes(&self) -> Vec<u8> {
+        let mut v = Vec::new();
+        self.bytes_into(&mut v);
+        v
+    }
+
     fn hash(&self) -> Hash {
         let mut val: [u8; 32] = Default::default();
         let mut hasher = Sha3_256::new();
@@ -96,12 +103,8 @@ impl fmt::Debug for Blob {
 }
 
 impl Storable for Blob {
-    fn bytes(&self) -> Vec<u8> {
-        let mut v = Vec::with_capacity(&self.bytes.capacity() + 1);
-        // Blobs all have a leading 0 byte
-        v.push(0);
+    fn bytes_into(&self, v: &mut Vec<u8>) {
         v.extend_from_slice(&self.bytes);
-        v
     }
 }
 
@@ -150,14 +153,12 @@ pub enum ADTItem {
     Sum(Vec<ADTItem>),
     Product(Vec<ADTItem>),
 }
-impl ADTItem {
-    fn bytes(&self) -> Vec<u8> {
-        let mut result = Vec::new();
+impl Storable for ADTItem {
+    fn bytes_into(&self, result: &mut Vec<u8>) {
         match self {
             ADTItem::Hash(h) => {
                 result.push(0);
                 result.extend_from_slice(&h.0[..]);
-                result
             }
             ADTItem::Sum(items) => {
                 // TODO: maybe sort these somehow for easier structural comparison?
@@ -166,7 +167,6 @@ impl ADTItem {
                 for item in items {
                     result.extend_from_slice(&item.bytes());
                 }
-                result
             }
             ADTItem::Product(items) => {
                 result.push(2);
@@ -174,19 +174,14 @@ impl ADTItem {
                 for item in items {
                     result.extend_from_slice(&item.bytes());
                 }
-                result
             }
         }
     }
 }
 impl Storable for ADT {
-    fn bytes(&self) -> Vec<u8> {
-        let mut v = Vec::new();
-        // Blobs all have a leading 0 byte
-        v.push(0);
+    fn bytes_into(&self, v: &mut Vec<u8>) {
         v.extend_from_slice(&self.uniqueness);
-        v.extend_from_slice(&self.value.bytes());
-        v
+        self.value.bytes_into(v);
     }
 }
 
@@ -236,13 +231,9 @@ pub struct Typing {
 }
 
 impl Storable for Typing {
-    fn bytes(&self) -> Vec<u8> {
-        let mut v = Vec::new();
-        // Typings all have a leading 1 byte
-        v.push(1);
+    fn bytes_into(&self, v: &mut Vec<u8>) {
         v.extend_from_slice(&self.type_hash.0[..]);
         v.extend_from_slice(&self.data_hash.0[..]);
-        v
     }
 }
 
@@ -267,7 +258,13 @@ pub enum ADTValue {
 }
 
 impl ADTValue {
-    fn just_bytes(&self, v: &mut Vec<u8>) {
+    pub fn hydrate(kind: &ADT, bytes: &[u8]) -> Result<ADTValue, BinaryADTInstiationError> {
+        validate_adt_instance_bytes(kind, bytes)
+    }
+}
+
+impl Storable for ADTValue {
+    fn bytes_into(&self, v: &mut Vec<u8>) {
         match self {
             ADTValue::Hash(h) => {
                 v.extend_from_slice(&h.0[..])
@@ -276,28 +273,14 @@ impl ADTValue {
                 kind, value
             } => {
                 v.push(*kind);
-                value.just_bytes(v);
+                value.bytes_into(v);
             },
             ADTValue::Product(subs) => {
                 for sub in subs {
-                    sub.just_bytes(v);
+                    sub.bytes_into(v);
                 }
             }
         }
-    }
-
-    pub fn hydrate(kind: &ADT, bytes: &[u8]) -> Result<ADTValue, BinaryADTInstiationError> {
-        validate_adt_instance_bytes(kind, bytes)
-    }
-}
-
-impl Storable for ADTValue {
-    fn bytes(&self) -> Vec<u8> {
-        let mut result = Vec::new();
-        // Blob byte
-        result.push(0);
-        self.just_bytes(&mut result);
-        result
     }
 }
 
@@ -586,24 +569,19 @@ pub struct RADT {
 }
 
 impl Storable for RADT {
-    fn bytes(&self) -> Vec<u8> {
-        let mut v = Vec::new();
-        v.push(0);
+    fn bytes_into(&self, v: &mut Vec<u8>) {
         v.extend_from_slice(&self.uniqueness);
         v.extend_from_slice(&self.items.len().to_be_bytes());
         for item in self.items.iter() {
-            v.extend_from_slice(&item.bytes());
+            item.bytes_into(v);
         }
-        v
     }
 }
 
 impl Decodable for RADT {
     fn decode(bytes: &[u8]) -> IResult<&[u8], RADT> {
-        let (bytes, _) = take(1u8)(bytes)?;
         let (more, uniq) = take(16u8)(bytes)?;
         let (rest, items) = length_count!(more, be_u64, RADTItem::decode)?;
-        // all_consuming(noop)(rest)?;
 
         let mut uniqueness = [0;16];
         uniqueness.copy_from_slice(uniq);
@@ -903,71 +881,69 @@ fn test_transpose() {
     assert_eq!(v, vec![2, 1, 3, 0])
 }
 
-impl RADTItem {
-    fn zero_bytes(&self) -> Vec<u8> {
-        let mut result = Vec::new();
+impl Storable for RADTItem {
+    fn bytes_into(&self, result: &mut Vec<u8>) {
         match self {
             RADTItem::ExternalType(h, idx) => {
                 result.push(0);
                 result.extend_from_slice(&h.0[..]);
                 result.extend_from_slice(&idx.to_be_bytes());
-                result
             },
             RADTItem::Sum(items) => {
                 // TODO: maybe sort these somehow for easier structural comparison?
                 result.push(1);
                 result.extend_from_slice(&items.len().to_be_bytes());
                 for item in items {
-                    result.extend_from_slice(&item.zero_bytes());
+                    item.bytes_into(result);
                 }
-                result
             },
             RADTItem::Product(items) => {
                 result.push(2);
                 result.extend_from_slice(&items.len().to_be_bytes());
                 for item in items {
-                    result.extend_from_slice(&item.zero_bytes());
+                    item.bytes_into(result);
                 }
-                result
-            },
-            RADTItem::CycleRef(index) => {
-                result.push(3);
-                result.extend_from_slice(&(0 as usize).to_be_bytes());
-                result
-            },
-        }
-    }
-
-    fn bytes(&self) -> Vec<u8> {
-        let mut result = Vec::new();
-        match self {
-            RADTItem::ExternalType(h, idx) => {
-                result.push(0);
-                result.extend_from_slice(&h.0[..]);
-                result.extend_from_slice(&idx.to_be_bytes());
-                result
-            },
-            RADTItem::Sum(items) => {
-                // TODO: maybe sort these somehow for easier structural comparison?
-                result.push(1);
-                result.extend_from_slice(&items.len().to_be_bytes());
-                for item in items {
-                    result.extend_from_slice(&item.bytes());
-                }
-                result
-            },
-            RADTItem::Product(items) => {
-                result.push(2);
-                result.extend_from_slice(&items.len().to_be_bytes());
-                for item in items {
-                    result.extend_from_slice(&item.bytes());
-                }
-                result
             },
             RADTItem::CycleRef(index) => {
                 result.push(3);
                 result.extend_from_slice(&index.to_be_bytes());
-                result
+            },
+        }
+    }
+}
+
+impl RADTItem {
+    fn zero_bytes(&self) -> Vec<u8> {
+        let mut v = Vec::new();
+        self.zero_bytes_into(&mut v);
+        v
+    }
+
+    fn zero_bytes_into(&self, result: &mut Vec<u8>) {
+        match self {
+            RADTItem::ExternalType(h, idx) => {
+                result.push(0);
+                result.extend_from_slice(&h.0[..]);
+                result.extend_from_slice(&idx.to_be_bytes());
+            },
+            RADTItem::Sum(items) => {
+                // TODO: maybe sort these somehow for easier structural comparison?
+                result.push(1);
+                result.extend_from_slice(&items.len().to_be_bytes());
+                for item in items {
+                    item.zero_bytes_into(result);
+                }
+            },
+            RADTItem::Product(items) => {
+                result.push(2);
+                result.extend_from_slice(&items.len().to_be_bytes());
+                for item in items {
+                    item.zero_bytes_into(result);
+                }
+            },
+            RADTItem::CycleRef(index) => {
+                result.push(3);
+                result.extend_from_slice(&(0 as usize).to_be_bytes());
             },
         }
     }
