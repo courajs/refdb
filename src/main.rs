@@ -201,7 +201,7 @@ pub enum ADTValue {
 }
 
 impl ADTValue {
-    pub fn hydrate(kind: &ADT, bytes: &[u8]) -> Result<ADTValue, BinaryADTInstiationError> {
+    pub fn hydrate(kind: &ADT, bytes: &[u8]) -> Result<ADTValue, BinaryADTInstantiationError> {
         validate_adt_instance_bytes(kind, bytes)
     }
 }
@@ -235,36 +235,36 @@ pub struct ExpectedTyping {
 }
 
 #[derive(Debug, Fail)]
-pub enum BinaryADTInstiationError {
+pub enum BinaryADTInstantiationError {
     #[fail(display = "Reached end of blob while parsing {}", _0)]
     Incomplete(&'static str),
     #[fail(display = "Invalid sum variant. There are {} options, but found variant tag {}", _0, _1)]
     InvalidSumVariant(usize, usize),
     #[fail(display = "Excess data at end of blob. Finished parsing with {} bytes remaining out of {} total", _0, _1)]
     Excess(usize, usize),
-    #[fail(display = "A type's data_hash must point to a blob")]
-    WrongType,
 }
 
-pub fn validate_adt_instance_bytes(t: &ADT, bytes: &[u8]) -> Result<ADTValue, BinaryADTInstiationError> {
+// We don't need to return the expected typings here because we only interpret bytes as an instance
+// if there's already a typing, and we only make the typing if all the expected typings check out.
+pub fn validate_adt_instance_bytes(t: &ADT, bytes: &[u8]) -> Result<ADTValue, BinaryADTInstantiationError> {
     let (value, rest) = inner_validate_adt_instance_bytes(&t.value, bytes)?;
     if rest.len() > 0 {
-        Err(BinaryADTInstiationError::Excess(rest.len(), bytes.len()))
+        Err(BinaryADTInstantiationError::Excess(rest.len(), bytes.len()))
     } else {
         Ok(value)
     }
 }
 
-pub fn inner_validate_adt_instance_bytes<'a, 'b>(t: &'a ADTItem, bytes: &'b [u8]) -> Result<(ADTValue, &'b [u8]), BinaryADTInstiationError> {
+pub fn inner_validate_adt_instance_bytes<'a, 'b>(t: &'a ADTItem, bytes: &'b [u8]) -> Result<(ADTValue, &'b [u8]), BinaryADTInstantiationError> {
     match t {
         ADTItem::Hash(type_hash) => Ok((ADTValue::Hash(parse_hash(bytes)?), &bytes[32..])),
         ADTItem::Sum(variants) => {
             if bytes.len() == 0 {
-                return Err(BinaryADTInstiationError::Incomplete("a sum variant tag"))
+                return Err(BinaryADTInstantiationError::Incomplete("a sum variant tag"))
             }
             let variant = bytes[0];
             if variant as usize >= variants.len() {
-                return Err(BinaryADTInstiationError::InvalidSumVariant(variants.len(), variant as usize))
+                return Err(BinaryADTInstantiationError::InvalidSumVariant(variants.len(), variant as usize))
             }
             let (inner, rest) = inner_validate_adt_instance_bytes(&variants[variant as usize], &bytes[1..])?;
             Ok((ADTValue::Sum {kind: variant, value: Box::new(inner)}, rest))
@@ -282,75 +282,13 @@ pub fn inner_validate_adt_instance_bytes<'a, 'b>(t: &'a ADTItem, bytes: &'b [u8]
     }
 }
 
-fn parse_hash(bytes: &[u8]) -> Result<Hash, BinaryADTInstiationError> {
+fn parse_hash(bytes: &[u8]) -> Result<Hash, BinaryADTInstantiationError> {
     if bytes.len() >= 32 {
         Ok(Hash::sure_from(&bytes[..32]))
     } else {
-        Err(BinaryADTInstiationError::Incomplete("a hash"))
+        Err(BinaryADTInstantiationError::Incomplete("a hash"))
     }
 }
-
-#[derive(Debug, Fail)]
-pub enum StructuredADTInstantiationError {
-    #[fail(display = "Expected a {}, found a {}", _0, _1)]
-    Mismatch(&'static str, &'static str),
-    #[fail(display = "Invalid sum variant. There are {} options, but found variant tag {}", _0, _1)]
-    InvalidSumVariant(usize, usize),
-    #[fail(display = "Invalid number of product fields. Expected {}, found {}", _0, _1)]
-    InvalidProductFieldCount(usize, usize),
-}
-
-pub fn validate_adt_instance(t: &ADT, value: &ADTValue) -> Result<Vec<ExpectedTyping>, StructuredADTInstantiationError> {
-    inner_validate_adt_instance(&t.value, value)
-}
-
-fn inner_validate_adt_instance(t: &ADTItem, value: &ADTValue) -> Result<Vec<ExpectedTyping>, StructuredADTInstantiationError> {
-    match t {
-        ADTItem::Hash(t) => {
-            match value {
-                ADTValue::Sum {..} => Err(StructuredADTInstantiationError::Mismatch("hash", "sum")),
-                ADTValue::Product(_) => Err(StructuredADTInstantiationError::Mismatch("hash", "product")),
-                ADTValue::Hash(v) => Ok(vec![ExpectedTyping {
-                    reference: *v,
-                    kind: *t,
-                }]),
-            }
-        }
-        ADTItem::Sum(subs) => {
-            match value {
-                ADTValue::Hash(_) => Err(StructuredADTInstantiationError::Mismatch("sum", "hash")),
-                ADTValue::Product(_) => Err(StructuredADTInstantiationError::Mismatch("sum", "product")),
-                ADTValue::Sum { kind, value: v } => {
-                    if *kind as usize >= subs.len() {
-                        Err(StructuredADTInstantiationError::InvalidSumVariant(subs.len(), *kind as usize))
-                    } else {
-                        inner_validate_adt_instance(&subs[*kind as usize], v)
-                    }
-                },
-            }
-        }
-        ADTItem::Product(field_types) => {
-            match value {
-                ADTValue::Hash(_) => Err(StructuredADTInstantiationError::Mismatch("product", "hash")),
-                ADTValue::Sum {..} => Err(StructuredADTInstantiationError::Mismatch("product", "sum")),
-                ADTValue::Product(field_values) => {
-                    if field_types.len() != field_values.len() {
-                        Err(StructuredADTInstantiationError::InvalidProductFieldCount(field_types.len(), field_values.len()))
-                    } else {
-                        let num = field_types.len();
-                        let mut hashes: Vec<ExpectedTyping> = Vec::with_capacity(num);
-                        for i in 0..num {
-                            let mut maybes = inner_validate_adt_instance(&field_types[i], &field_values[i])?;
-                            hashes.append(&mut maybes);
-                        }
-                        Ok(hashes)
-                    }
-                },
-            }
-        }
-    }
-}
-
 
 
 pub struct Db<'a> {
@@ -390,7 +328,7 @@ pub enum DBFailure {
     BrokenTyping {
         hash: Hash,
         target_type: Hash,
-        #[cause] err: BinaryADTInstiationError,
+        #[cause] err: BinaryADTInstantiationError,
     },
 }
 
@@ -546,6 +484,69 @@ pub enum RADTValue {
     Product(Vec<RADTValue>),
 }
 
+impl Storable for RADTValue {
+    fn bytes_into(&self, v: &mut Vec<u8>) {
+        match self {
+            RADTValue::Hash(h) => {
+                v.extend_from_slice(&h.0[..])
+            },
+            RADTValue::Sum {
+                kind, value
+            } => {
+                v.push(*kind);
+                value.bytes_into(v);
+            },
+            RADTValue::Product(subs) => {
+                for sub in subs {
+                    sub.bytes_into(v);
+                }
+            }
+        }
+    }
+}
+
+// We don't need to return the expected typings here because we only interpret bytes as an instance
+// if there's already a typing, and we only make the typing if all the expected typings check out.
+pub fn validate_radt_instance_bytes(t: &RADT, idx: usize, bytes: &[u8]) -> Result<RADTValue, BinaryADTInstantiationError> {
+    let (value, rest) = inner_validate_radt_instance_bytes(&t.items, &t.items[idx], bytes)?;
+    if rest.len() > 0 {
+        Err(BinaryADTInstantiationError::Excess(rest.len(), bytes.len()))
+    } else {
+        Ok(value)
+    }
+}
+
+pub fn inner_validate_radt_instance_bytes<'a, 'b>(base_items: &'a [RADTItem], t: &'a RADTItem, bytes: &'b [u8]) -> Result<(RADTValue, &'b [u8]), BinaryADTInstantiationError> {
+    match t {
+        RADTItem::ExternalType(type_hash, idx) => Ok((RADTValue::Hash(parse_hash(bytes)?), &bytes[32..])),
+        RADTItem::Sum(variants) => {
+            if bytes.len() == 0 {
+                return Err(BinaryADTInstantiationError::Incomplete("a sum variant tag"))
+            }
+            let variant = bytes[0];
+            if variant as usize >= variants.len() {
+                return Err(BinaryADTInstantiationError::InvalidSumVariant(variants.len(), variant as usize))
+            }
+            let (inner, rest) = inner_validate_radt_instance_bytes(&variants[variant as usize], &bytes[1..])?;
+            Ok((RADTValue::Sum {kind: variant, value: Box::new(inner)}, rest))
+        },
+        RADTItem::Product(fields) => {
+            let mut values = Vec::new();
+            let mut rest = bytes;
+            for field in fields {
+                let (val, more) = inner_validate_radt_instance_bytes(field, rest)?;
+                values.push(val);
+                rest = more;
+            }
+            Ok((RADTValue::Product(values), rest))
+        },
+        RADTItem::CycleRef(idx) => {
+            inner_validate_radt_instance(base_items, &base_items[*idx], value)
+        },
+    }
+}
+
+
 #[derive(Debug, Fail)]
 pub enum StructuredRADTInstantiationError {
     #[fail(display = "Expected a {}, found a {}", _0, _1)]
@@ -558,7 +559,7 @@ pub enum StructuredRADTInstantiationError {
     InvalidCycleRef(usize, usize),
 }
 
-pub fn validate_radt_instance(t: &RADT, index: usize, value: &RADTValue) -> Result<Vec<RADTExpected>, StructuredRADTInstantiationError> {
+pub fn validate_radt_instance(t: &RADT, index: usize, value: &RADTValue) -> Result<Vec<ExpectedTyping>, StructuredRADTInstantiationError> {
     if index >= t.items.len() {
         Err(StructuredRADTInstantiationError::InvalidCycleRef(t.items.len(), index))
     } else {
@@ -566,13 +567,13 @@ pub fn validate_radt_instance(t: &RADT, index: usize, value: &RADTValue) -> Resu
     }
 }
 
-fn inner_validate_radt_instance(base_items: &[RADTItem], current_item: &RADTItem, value: &RADTValue) -> Result<Vec<RADTExpected>, StructuredRADTInstantiationError> {
+fn inner_validate_radt_instance(base_items: &[RADTItem], current_item: &RADTItem, value: &RADTValue) -> Result<Vec<ExpectedTyping>, StructuredRADTInstantiationError> {
     match current_item {
         RADTItem::ExternalType(def, idx) => {
             match value {
                 RADTValue::Sum{..} => Err(StructuredRADTInstantiationError::Mismatch("hash", "sum")),
                 RADTValue::Product(_) => Err(StructuredRADTInstantiationError::Mismatch("hash", "product")),
-                RADTValue::Hash(val) => Ok(vec![RADTExpected { def: *def, index: *idx, value: *val}]),
+                RADTValue::Hash(val) => Ok(vec![ExpectedTyping { reference: *val, kind: TypeDef { definition: *def, item: *idx } }]),
             }
         },
         RADTItem::Sum(subs) => {
