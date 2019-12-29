@@ -40,6 +40,17 @@ impl Hash {
     }
 }
 
+impl Storable for Hash {
+    fn into_bytes(&self, v: &mut Vec<u8>) {
+        v.extend_from_slice(&self.0);
+    }
+}
+impl Decodable for Hash {
+    fn decode(bytes: &[u8]) -> IResult<&[u8], Hash> {
+        map(take(32u8), Hash::sure_from)(bytes)
+    }
+}
+
 fn hash_slice(bytes: &[u8]) -> Hash {
     let mut val: [u8; 32] = Default::default();
     let mut hasher = Sha3_256::new();
@@ -114,101 +125,6 @@ impl Decodable for Blob {
     }
 }
 
-// Algebraic Data Type
-pub struct ADT {
-    // This is for types to be more like nominal types and less like
-    // structural types.
-    // Maybe see https://www.unisonweb.org/docs/language-reference/type-declarations#unique-types
-    // Presumably this is generated randomly to minimize collisions with other types.
-    pub uniqueness: [u8; 16],
-    pub value: ADTItem,
-}
-
-// blob zero byte + uniqueness + ADTItem tag + a single hash (smallest variant)
-const MIN_ADT_SIZE: usize = 1 + 16 + 1 + 32;
-impl Decodable for ADT {
-    fn decode(bytes: &[u8]) -> IResult<&[u8], ADT> {
-        let (more, (uniq, value)) = tuple((take(16u8), ADTItem::decode))(bytes)?;
-
-        let mut uniqueness = [0; 16];
-        uniqueness.copy_from_slice(uniq);
-        Ok((more, ADT { uniqueness, value }))
-    }
-}
-
-impl fmt::Debug for ADT {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "ADT {{ \n    uniqueness: 0x{},\n    value: {:#?} }}",
-            &hex::encode(self.uniqueness),
-            &self.value
-        )
-    }
-}
-
-#[derive(Debug)]
-pub enum ADTItem {
-    Hash(Hash),
-    Sum(Vec<ADTItem>),
-    Product(Vec<ADTItem>),
-}
-impl Storable for ADTItem {
-    fn bytes_into(&self, result: &mut Vec<u8>) {
-        match self {
-            ADTItem::Hash(h) => {
-                result.push(0);
-                result.extend_from_slice(&h.0[..]);
-            }
-            ADTItem::Sum(items) => {
-                // TODO: maybe sort these somehow for easier structural comparison?
-                result.push(1);
-                result.extend_from_slice(&items.len().to_be_bytes());
-                for item in items {
-                    result.extend_from_slice(&item.bytes());
-                }
-            }
-            ADTItem::Product(items) => {
-                result.push(2);
-                result.extend_from_slice(&items.len().to_be_bytes());
-                for item in items {
-                    result.extend_from_slice(&item.bytes());
-                }
-            }
-        }
-    }
-}
-impl Storable for ADT {
-    fn bytes_into(&self, v: &mut Vec<u8>) {
-        v.extend_from_slice(&self.uniqueness);
-        self.value.bytes_into(v);
-    }
-}
-
-fn decode_hash(bytes: &[u8]) -> IResult<&[u8], ADTItem> {
-    map(take(32u8), |b| { ADTItem::Hash(Hash::sure_from(b)) })(bytes)
-}
-fn decode_sum(bytes: &[u8]) -> IResult<&[u8], ADTItem> {
-    map(decode_items, |items| { ADTItem::Sum(items) })(bytes)
-}
-fn decode_product(bytes: &[u8]) -> IResult<&[u8], ADTItem> {
-    map(decode_items, |items| { ADTItem::Product(items) })(bytes)
-}
-fn decode_items(bytes: &[u8]) -> IResult<&[u8], Vec<ADTItem>> {
-    length_count!(bytes, be_u64, ADTItem::decode)
-}
-
-impl Decodable for ADTItem {
-    fn decode(bytes: &[u8]) -> IResult<&[u8], ADTItem> {
-        switch!(
-            bytes,
-            be_u8,
-            0 => call!(decode_hash)
-            | 1 => call!(decode_sum)
-            | 2 => call!(decode_product)
-        )
-    }
-}
 
 pub static BLOB_TYPE_HASH: Hash = Hash(hex!(
     "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"
@@ -217,33 +133,60 @@ pub static ADT_TYPE_HASH: Hash = Hash(hex!(
     "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001"
 ));
 
+pub struct TypeRef {
+    definition: Hash,
+    item: usize,
+}
+impl Storable for TypeRef {
+    fn bytes_into(&self, v: &mut Vec<u8>) {
+        v.extend_from_slice(self.definition.0);
+        v.extend_from_slice(&self.item.to_be_bytes());
+    }
+}
+impl Decodable for TypeRef {
+    fn decode(bytes: &[u8]) -> IResult<&[u8], TypeRef> {
+        map(tuple((Hash::decode, usize::decode)),
+            |(definition, item)| TypeRef { definition, item })
+        (bytes)
+    }
+}
+
+impl Storable for usize {
+    fn bytes_into(self, v: &mut Vec<u8>) {
+        v.extend_from_slice(&self.to_be_bytes());
+    }
+}
+impl Decodable for usize {
+    fn decode(bytes: &[u8]) -> IResult<&[u8], usize> {
+        map(take(8u8), usize::from_be_bytes)(bytes)
+    }
+}
+
 #[derive(Debug)]
 pub struct Typing {
     // Either this typing represents a type or a value.
-    // If it represents a type, then type_hash will a special value
+    // If it represents a type, then type_hash will be a special value
     // that means type (1 for adts, 2 for custom types, etc)
     // Otherwise, if it's a value, it will be the hash of a typing
     // which represents a type.
     // If this contained the hash of a blob, it would be invalid.
-    pub type_hash: Hash,
+    pub kind: TypeRef,
     // the actual data blob
-    pub data_hash: Hash,
+    pub data: Hash,
 }
 
 impl Storable for Typing {
     fn bytes_into(&self, v: &mut Vec<u8>) {
-        v.extend_from_slice(&self.type_hash.0[..]);
-        v.extend_from_slice(&self.data_hash.0[..]);
+        self.kind.bytes_into(v);
+        self.data.bytes_into(v);
     }
 }
 
-// leading 1 to indicate a typing, then two hashes
-const TYPING_SIZE: usize = 1 + 32 + 32;
 impl Decodable for Typing {
     fn decode(bytes: &[u8]) -> IResult<&[u8], Typing> {
-        let (rest, (type_hash, data_hash)) =
-            tuple((map(take(32u8), Hash::sure_from), map(take(32u8), Hash::sure_from)))(bytes)?;
-        Ok((rest, Typing { type_hash, data_hash }))
+        map( tuple((TypeRef::decode, Hash::decode)),
+             |(kind, data)| Typing { kind, data })
+        (bytes)
     }
 }
 
@@ -288,7 +231,7 @@ impl Storable for ADTValue {
 #[derive(Debug)]
 pub struct ExpectedTyping {
     pub reference: Hash,
-    pub kind: Hash,
+    pub kind: TypeRef,
 }
 
 #[derive(Debug, Fail)]
@@ -593,6 +536,7 @@ fn noop(b: &[u8]) -> IResult<&[u8], ()> {
     Ok((b, ()))
 }
 
+#[derive(Debug)]
 pub enum RADTValue {
     Hash(Hash),
     Sum {
@@ -602,11 +546,34 @@ pub enum RADTValue {
     Product(Vec<RADTValue>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct RADTExpected {
-    def: Hash,
-    index: usize,
-    value: Hash,
+type NormalParseError<I> = (I, nom::error::ErrorKind);
+pub enum CustomParseError<I> {
+    Mine(StructuredRADTInstantiationError),
+    Theirs(NormalParseError<I>),
+}
+impl nom::error::ParseError<I> for CustomParseError<I> {
+    use CustomParseError::*;
+    fn from_error_kind(input: I, kind: nom::error::ErrorKind) -> Self {
+        Theirs(NormalParseError<I>::from_error_kind(input, kind))
+    }
+    fn append(input: I, kind: nom::error::ErrorKind, other: Self) -> Self {
+        other
+    }
+}
+
+type StructuredParseInput<'a, 'b> = (&'a [RADTItem], &'a RADTItem, &'b RADTValue);
+impl RADTValue {
+    pub fn validate_as<'a, 'b>((base_items, current_item, current_value): StructuredParseInput<'a, 'b>) -> IResult<StructuredParseInput<'a, 'b>, (), StructuredRADTInstantiationError> {
+        match current_item {
+            RADTItem::ExternalType(def, idx) => {
+                match value {
+                    RADTValue::Sum{..} => Err(Mine(StructuredRADTInstantiationError::Mismatch("hash", "sum"))),
+                    RADTValue::Product(_) => Err(Mine(StructuredRADTInstantiationError::Mismatch("hash", "product"))),
+                    RADTValue::Hash(val) => Ok(vec![RADTExpected { def: *def, index: *idx, value: *val}]),
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug, Fail)]
