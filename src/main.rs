@@ -9,7 +9,7 @@ use std::{
     convert::{From, TryInto},
 };
 
-use failure::{Fail, Error, ResultExt};
+use failure::{Fail, Error, ResultExt, bail};
 use hex_literal::hex;
 use rkv::{Value, Manager, Rkv, SingleStore, StoreOptions};
 use sha3::{Digest, Sha3_256};
@@ -947,41 +947,13 @@ fn main() -> Result<(), Error>{
     db.put(&typing)?;
 
 
-    dbg!(db.get(typing.hash()));
-    // dbg!(db.get_bytes(typing.hash()));
+    let (typeref, val) = match db.get(typing.hash())? {
+         Item::Value(t, v) => (t,v),
+         _ => { bail!("nah") },
+    };
 
-    // let typing = apply_typing_and_store(&db, &double_ref_type, &double_instance)?;
-
-    // dbg!(typing.hash());
-    // let bytes = db.get_bytes(typing.hash())?;
-    // dbg!(decode_item(&bytes));
-    // dbg!(double_ref_typing.hash());
-    // dbg!(double_instance.hash());
-    // dbg!(typing);
-
-    /*
-    if let Item::Value(kind, ADTValue::Product(subs)) = db.get(typing.hash())? {
-        dbg!(kind);
-        for b in subs {
-            if let ADTValue::Hash(h) = b {
-                if let Item::BlobRef(h2) = db.get(h)? {
-                    if let Item::Blob(bb) = db.get(h2)? {
-                        dbg!(std::str::from_utf8(&bb.bytes))?;
-                    }
-                }
-            }
-        }
-        dbg!(blob1.hash());
-        dbg!(blob2.hash());
-    }
-    */
-
-    // match db.get(typing.hash())? {
-    //     None => println!("nah"),
-    //     Some(bytes) => {
-    //         println!("{}", bytes.len());
-    //     },
-    // }
+    dbg!(typeref);
+    dbg!(val);
 
     Ok(())
 }
