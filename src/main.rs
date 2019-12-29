@@ -20,6 +20,69 @@ use nom::{
 use rkv::{Manager, Rkv, SingleStore, StoreOptions, Value};
 use sha3::{Digest, Sha3_256};
 
+
+
+#[derive(Debug, Fail)]
+pub enum MonsterError {
+    #[fail(display = "Expected a {}, found a {}", _0, _1)]
+    Mismatch(&'static str, &'static str),
+    #[fail(
+        display = "Invalid sum variant. There are {} options, but found variant tag {}",
+        _0, _1
+    )]
+    InvalidSumVariant(usize, usize),
+    #[fail(
+        display = "Invalid number of product fields. Expected {}, found {}",
+        _0, _1
+    )]
+    InvalidProductFieldCount(usize, usize),
+    #[fail(
+        display = "Invalid cycle variant. There are {} options, but found reference to item {}",
+        _0, _1
+    )]
+    InvalidCycleRef(usize, usize),
+    #[fail(display = "Reached end of blob while parsing {}", _0)]
+    Incomplete(&'static str),
+    #[fail(
+        display = "Excess data at end of blob. Finished parsing with {} bytes remaining out of {} total",
+        _0, _1
+    )]
+    Excess(usize, usize),
+    #[fail(display = "Error parsing {:?} from store: {:?}", _0, _1)]
+    ParseError(Hash, String),
+    #[fail(display = "RKV store error: {:?}", _0)]
+    RkvError(#[cause] rkv::error::StoreError),
+    #[fail(display = "Non-blob found in rkv store under hash {:?}", _0)]
+    NonBlob(Hash),
+    #[fail(display = "{:?} wasn't found in the store", _0)]
+    NotFound(Hash),
+    #[fail(display = "A type definition didn't point directly to bytes")]
+    BrokenTypedef,
+    #[fail(display = "A typing's type hash doesn't point to a type")]
+    UntypedTyping,
+    #[fail(
+        display = "The typing {:?} couldn't be interpreted as a {:?}:\n{}",
+        hash, target_type, err
+    )]
+    BrokenTyping {
+        hash: Hash,
+        target_type: TypeRef,
+        err: String,
+    },
+    #[fail(display = "found blob instead of typing for sub-field ({:?})", _0)]
+    UntypedReference(Hash),
+    #[fail(
+        display = "prereq {:?} is of wrong type. Expected {:?}, found {:?}",
+        reference, expected_type, actual_type
+    )]
+    MistypedReference {
+        reference: Hash,
+        expected_type: TypeRef,
+        actual_type: TypeRef,
+    },
+}
+
+
 // Basic persistence primitives
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Hash(pub [u8; 32]);
@@ -225,27 +288,11 @@ pub struct ExpectedTyping {
     pub kind: TypeRef,
 }
 
-#[derive(Debug, Fail)]
-pub enum BinaryRADTInstantiationError {
-    #[fail(display = "Reached end of blob while parsing {}", _0)]
-    Incomplete(&'static str),
-    #[fail(
-        display = "Invalid sum variant. There are {} options, but found variant tag {}",
-        _0, _1
-    )]
-    InvalidSumVariant(usize, usize),
-    #[fail(
-        display = "Excess data at end of blob. Finished parsing with {} bytes remaining out of {} total",
-        _0, _1
-    )]
-    Excess(usize, usize),
-}
-
-fn parse_hash(bytes: &[u8]) -> Result<Hash, BinaryRADTInstantiationError> {
+fn parse_hash(bytes: &[u8]) -> Result<Hash, MonsterError> {
     if bytes.len() >= 32 {
         Ok(Hash::sure_from(&bytes[..32]))
     } else {
-        Err(BinaryRADTInstantiationError::Incomplete("a hash"))
+        Err(MonsterError::Incomplete("a hash"))
     }
 }
 
@@ -268,32 +315,6 @@ pub enum LiteralItem {
     Typing(Typing),
 }
 
-#[derive(Debug, Fail)]
-pub enum DBFailure {
-    #[fail(display = "Error parsing {:?} from store: {:?}", _0, _1)]
-    ParseError(Hash, String),
-    #[fail(display = "RKV store error: {:?}", _0)]
-    RkvError(#[cause] rkv::error::StoreError),
-    #[fail(display = "Non-blob found in rkv store under hash {:?}", _0)]
-    NonBlob(Hash),
-    #[fail(display = "{:?} wasn't found in the store", _0)]
-    NotFound(Hash),
-    #[fail(display = "A type definition didn't point directly to bytes")]
-    BrokenTypedef,
-    #[fail(display = "A typing's type hash doesn't point to a type")]
-    UntypedTyping,
-    #[fail(
-        display = "The typing {:?} couldn't be interpreted as a {:?}:\n{}",
-        hash, target_type, err
-    )]
-    BrokenTyping {
-        hash: Hash,
-        target_type: TypeRef,
-        #[cause]
-        err: BinaryRADTInstantiationError,
-    },
-}
-
 pub fn decode_item(bytes: &[u8]) -> IResult<&[u8], LiteralItem> {
     switch!(
         bytes,
@@ -304,35 +325,35 @@ pub fn decode_item(bytes: &[u8]) -> IResult<&[u8], LiteralItem> {
 }
 
 impl<'a> Db<'a> {
-    pub fn put(&self, item: &impl Storable) -> Result<(), DBFailure> {
+    pub fn put(&self, item: &impl Storable) -> Result<(), MonsterError> {
         // FIXME - handle errors properly here
         let mut writer = self.env.write().unwrap();
         self.store
             .put(&mut writer, &item.hash(), &Value::Blob(&item.all_bytes()))
-            .map_err(|e| DBFailure::RkvError(e))?;
+            .map_err(|e| MonsterError::RkvError(e))?;
 
-        writer.commit().map_err(|e| DBFailure::RkvError(e))?;
+        writer.commit().map_err(|e| MonsterError::RkvError(e))?;
 
         Ok(())
     }
 
-    pub fn get_bytes(&self, hash: Hash) -> Result<Vec<u8>, DBFailure> {
+    pub fn get_bytes(&self, hash: Hash) -> Result<Vec<u8>, MonsterError> {
         let reader = self.env.read().expect("reader");
         let r = self
             .store
             .get(&reader, &hash)
-            .map_err(|e| DBFailure::RkvError(e))?;
+            .map_err(|e| MonsterError::RkvError(e))?;
         match r {
             Some(Value::Blob(bytes)) => Ok(bytes.into()),
-            Some(_) => Err(DBFailure::NonBlob(hash)),
-            None => Err(DBFailure::NotFound(hash)),
+            Some(_) => Err(MonsterError::NonBlob(hash)),
+            None => Err(MonsterError::NotFound(hash)),
         }
     }
 
-    pub fn get(&self, hash: Hash) -> Result<Item, DBFailure> {
+    pub fn get(&self, hash: Hash) -> Result<Item, MonsterError> {
         let bytes = self.get_bytes(hash)?;
         match decode_item(&bytes) {
-            Err(e) => Err(DBFailure::ParseError(hash, format!("{:?}", e))),
+            Err(e) => Err(MonsterError::ParseError(hash, format!("{:?}", e))),
             Ok((_, LiteralItem::Blob(b))) => Ok(Item::Blob(b)),
             Ok((_, LiteralItem::Typing(typing))) => {
                 if typing.kind.definition == BLOB_TYPE_HASH {
@@ -340,18 +361,18 @@ impl<'a> Db<'a> {
                 } else if typing.kind.definition == RADT_TYPE_HASH {
                     let definition_bytes = self.get_bytes(typing.data)?;
                     let definition_blob = match decode_item(&definition_bytes)
-                        .map_err(|e| DBFailure::ParseError(hash, format!("{:?}", e)))?
+                        .map_err(|e| MonsterError::ParseError(hash, format!("{:?}", e)))?
                     {
-                        (_, LiteralItem::Typing(_)) => Err(DBFailure::BrokenTypedef),
+                        (_, LiteralItem::Typing(_)) => Err(MonsterError::BrokenTypedef),
                         (_, LiteralItem::Blob(b)) => Ok(b),
                     }?;
                     let (_, def) = all_consuming(RADT::decode)(&definition_blob.bytes)
-                        .map_err(|e| DBFailure::ParseError(hash, format!("{:?}", e)))?;
+                        .map_err(|e| MonsterError::ParseError(hash, format!("{:?}", e)))?;
                     return Ok(Item::TypeDef(def));
                 } else {
                     match self.get(typing.kind.definition)? {
                         Item::Blob(_) | Item::BlobRef(_) | Item::Value(_, _) => {
-                            Err(DBFailure::UntypedTyping)
+                            Err(MonsterError::UntypedTyping)
                         }
                         Item::TypeDef(radt) => {
                             let instance_bytes = self.get_bytes(typing.data)?;
@@ -360,10 +381,10 @@ impl<'a> Db<'a> {
                                 typing.kind.item,
                                 &instance_bytes[1..],
                             )
-                            .map_err(|e| DBFailure::BrokenTyping {
+                            .map_err(|e| MonsterError::BrokenTyping {
                                 hash,
                                 target_type: typing.kind,
-                                err: e,
+                                err: format!("{}", e),
                             })?;
                             Ok(Item::Value(typing.kind, instance))
                         }
@@ -377,17 +398,17 @@ impl<'a> Db<'a> {
         for expected in typings {
             let bytes = self.get_bytes(expected.reference)?;
             match decode_item(&bytes[..]) {
-                Err(_) => {
-                    Err(TypingApplicationFailure::ParseError(expected.reference))?;
+                Err(e) => {
+                    Err(MonsterError::ParseError(expected.reference, format!("{:?}", e)))?;
                 }
                 Ok((_, LiteralItem::Blob(_))) => {
-                    Err(TypingApplicationFailure::UntypedReference(
+                    Err(MonsterError::UntypedReference(
                         expected.reference,
                     ))?;
                 }
                 Ok((_, LiteralItem::Typing(typing))) => {
                     if typing.kind != expected.kind {
-                        Err(TypingApplicationFailure::MistypedReference {
+                        Err(MonsterError::MistypedReference {
                             reference: expected.reference,
                             expected_type: expected.kind,
                             actual_type: typing.kind,
@@ -398,23 +419,6 @@ impl<'a> Db<'a> {
         }
         Ok(())
     }
-}
-
-#[derive(Debug, Fail)]
-enum TypingApplicationFailure {
-    #[fail(display = "error parsing sub-field {:?}", _0)]
-    ParseError(Hash),
-    #[fail(display = "found blob instead of typing for sub-field ({:?})", _0)]
-    UntypedReference(Hash),
-    #[fail(
-        display = "prereq {:?} is of wrong type. Expected {:?}, found {:?}",
-        reference, expected_type, actual_type
-    )]
-    MistypedReference {
-        reference: Hash,
-        expected_type: TypeRef,
-        actual_type: TypeRef,
-    },
 }
 
 // recursive adt
@@ -482,10 +486,10 @@ pub fn validate_radt_instance_bytes(
     t: &RADT,
     idx: usize,
     bytes: &[u8],
-) -> Result<RADTValue, BinaryRADTInstantiationError> {
+) -> Result<RADTValue, MonsterError> {
     let (value, rest) = inner_validate_radt_instance_bytes(&t.items, &t.items[idx], bytes)?;
     if rest.len() > 0 {
-        Err(BinaryRADTInstantiationError::Excess(
+        Err(MonsterError::Excess(
             rest.len(),
             bytes.len(),
         ))
@@ -498,20 +502,20 @@ pub fn inner_validate_radt_instance_bytes<'a, 'b>(
     base_items: &'a [RADTItem],
     t: &'a RADTItem,
     bytes: &'b [u8],
-) -> Result<(RADTValue, &'b [u8]), BinaryRADTInstantiationError> {
+) -> Result<(RADTValue, &'b [u8]), MonsterError> {
     match t {
         RADTItem::ExternalType(_,_) => {
             Ok((RADTValue::Hash(parse_hash(bytes)?), &bytes[32..]))
         }
         RADTItem::Sum(variants) => {
             if bytes.len() == 0 {
-                return Err(BinaryRADTInstantiationError::Incomplete(
+                return Err(MonsterError::Incomplete(
                     "a sum variant tag",
                 ));
             }
             let variant = bytes[0];
             if variant as usize >= variants.len() {
-                return Err(BinaryRADTInstantiationError::InvalidSumVariant(
+                return Err(MonsterError::InvalidSumVariant(
                     variants.len(),
                     variant as usize,
                 ));
@@ -545,34 +549,13 @@ pub fn inner_validate_radt_instance_bytes<'a, 'b>(
     }
 }
 
-#[derive(Debug, Fail)]
-pub enum StructuredRADTInstantiationError {
-    #[fail(display = "Expected a {}, found a {}", _0, _1)]
-    Mismatch(&'static str, &'static str),
-    #[fail(
-        display = "Invalid sum variant. There are {} options, but found variant tag {}",
-        _0, _1
-    )]
-    InvalidSumVariant(usize, usize),
-    #[fail(
-        display = "Invalid number of product fields. Expected {}, found {}",
-        _0, _1
-    )]
-    InvalidProductFieldCount(usize, usize),
-    #[fail(
-        display = "Invalid cycle variant. There are {} options, but found reference to item {}",
-        _0, _1
-    )]
-    InvalidCycleRef(usize, usize),
-}
-
 pub fn validate_radt_instance(
     t: &RADT,
     index: usize,
     value: &RADTValue,
-) -> Result<Vec<ExpectedTyping>, StructuredRADTInstantiationError> {
+) -> Result<Vec<ExpectedTyping>, MonsterError> {
     if index >= t.items.len() {
-        Err(StructuredRADTInstantiationError::InvalidCycleRef(
+        Err(MonsterError::InvalidCycleRef(
             t.items.len(),
             index,
         ))
@@ -585,11 +568,11 @@ fn inner_validate_radt_instance(
     base_items: &[RADTItem],
     current_item: &RADTItem,
     value: &RADTValue,
-) -> Result<Vec<ExpectedTyping>, StructuredRADTInstantiationError> {
+) -> Result<Vec<ExpectedTyping>, MonsterError> {
     match current_item {
         RADTItem::ExternalType(def, idx) => match value {
-            RADTValue::Sum { .. } => Err(StructuredRADTInstantiationError::Mismatch("hash", "sum")),
-            RADTValue::Product(_) => Err(StructuredRADTInstantiationError::Mismatch(
+            RADTValue::Sum { .. } => Err(MonsterError::Mismatch("hash", "sum")),
+            RADTValue::Product(_) => Err(MonsterError::Mismatch(
                 "hash", "product",
             )),
             RADTValue::Hash(val) => Ok(vec![ExpectedTyping {
@@ -601,13 +584,13 @@ fn inner_validate_radt_instance(
             }]),
         },
         RADTItem::Sum(subs) => match value {
-            RADTValue::Hash(_) => Err(StructuredRADTInstantiationError::Mismatch("sum", "hash")),
+            RADTValue::Hash(_) => Err(MonsterError::Mismatch("sum", "hash")),
             RADTValue::Product(_) => {
-                Err(StructuredRADTInstantiationError::Mismatch("sum", "product"))
+                Err(MonsterError::Mismatch("sum", "product"))
             }
             RADTValue::Sum { kind, value } => {
                 if (*kind as usize) >= subs.len() {
-                    Err(StructuredRADTInstantiationError::InvalidSumVariant(
+                    Err(MonsterError::InvalidSumVariant(
                         subs.len(),
                         *kind as usize,
                     ))
@@ -617,15 +600,15 @@ fn inner_validate_radt_instance(
             }
         },
         RADTItem::Product(subs) => match value {
-            RADTValue::Hash(_) => Err(StructuredRADTInstantiationError::Mismatch(
+            RADTValue::Hash(_) => Err(MonsterError::Mismatch(
                 "product", "hash",
             )),
             RADTValue::Sum { .. } => {
-                Err(StructuredRADTInstantiationError::Mismatch("product", "sum"))
+                Err(MonsterError::Mismatch("product", "sum"))
             }
             RADTValue::Product(values) => {
                 if subs.len() != values.len() {
-                    Err(StructuredRADTInstantiationError::InvalidProductFieldCount(
+                    Err(MonsterError::InvalidProductFieldCount(
                         subs.len(),
                         values.len(),
                     ))
@@ -642,7 +625,7 @@ fn inner_validate_radt_instance(
         },
         RADTItem::CycleRef(idx) => {
             if *idx >= base_items.len() {
-                Err(StructuredRADTInstantiationError::InvalidCycleRef(
+                Err(MonsterError::InvalidCycleRef(
                     base_items.len(),
                     *idx,
                 ))
