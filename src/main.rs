@@ -9,13 +9,12 @@ use std::{
 use failure::{bail, Error, Fail};
 use hex_literal::hex;
 use nom::{
+    IResult,
+    switch, call, length_count, map,
     bytes::complete::take,
-    call,
-    combinator::{all_consuming, map},
-    length_count, map,
     number::complete::{be_u64, be_u8},
     sequence::tuple,
-    switch, IResult,
+    combinator::{all_consuming, map},
 };
 use rkv::{Manager, Rkv, SingleStore, StoreOptions, Value};
 use sha3::{Digest, Sha3_256};
