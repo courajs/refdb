@@ -1,27 +1,22 @@
-#![allow(dead_code,unused_variables,unused_imports)]
-
-// use std::env;
-// use num::{BigUint};
-
 use std::{
+    convert::{TryInto},
     fmt,
     path::Path,
-    convert::{From, TryInto},
 };
 
-use failure::{Fail, Error, ResultExt, bail};
+use failure::{bail, Error, Fail};
 use hex_literal::hex;
-use rkv::{Value, Manager, Rkv, SingleStore, StoreOptions};
-use sha3::{Digest, Sha3_256};
 use nom::{
-    IResult,
-    switch, map, call, length_count,
-    dbg as nom_dbg,
-    bytes::complete::{take, tag},
-    number::complete::{be_u8, be_u64},
-    sequence::{preceded, tuple},
-    combinator::{rest, rest_len, verify, map, all_consuming},
+    bytes::complete::take,
+    call,
+    combinator::{all_consuming, map},
+    length_count, map,
+    number::complete::{be_u64, be_u8},
+    sequence::tuple,
+    switch, IResult,
 };
+use rkv::{Manager, Rkv, SingleStore, StoreOptions, Value};
+use sha3::{Digest, Sha3_256};
 
 // Basic persistence primitives
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -92,7 +87,6 @@ pub trait Serializable {
         self.bytes_into(&mut v);
         v
     }
-
 }
 
 pub trait Decodable: Sized {
@@ -136,10 +130,14 @@ impl Storable for Blob {
 
 impl Decodable for Blob {
     fn decode(bytes: &[u8]) -> IResult<&[u8], Blob> {
-        Ok((&[], Blob { bytes: bytes.into() }))
+        Ok((
+            &[],
+            Blob {
+                bytes: bytes.into(),
+            },
+        ))
     }
 }
-
 
 pub static BLOB_TYPE_HASH: Hash = Hash(hex!(
     "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"
@@ -161,9 +159,10 @@ impl Serializable for TypeRef {
 }
 impl Decodable for TypeRef {
     fn decode(bytes: &[u8]) -> IResult<&[u8], TypeRef> {
-        map(tuple((Hash::decode, usize::decode)),
-            |(definition, item)| TypeRef { definition, item })
-        (bytes)
+        map(
+            tuple((Hash::decode, usize::decode)),
+            |(definition, item)| TypeRef { definition, item },
+        )(bytes)
     }
 }
 
@@ -209,12 +208,11 @@ impl Storable for Typing {
 
 impl Decodable for Typing {
     fn decode(bytes: &[u8]) -> IResult<&[u8], Typing> {
-        map( tuple((TypeRef::decode, Hash::decode)),
-             |(kind, data)| Typing { kind, data })
-        (bytes)
+        map(tuple((TypeRef::decode, Hash::decode)), |(kind, data)| {
+            Typing { kind, data }
+        })(bytes)
     }
 }
-
 
 // same structure as Typing, but the Hash fields mean different things.
 // For typing, that's the hash of the blob containing the value. For this
@@ -229,9 +227,15 @@ pub struct ExpectedTyping {
 pub enum BinaryRADTInstantiationError {
     #[fail(display = "Reached end of blob while parsing {}", _0)]
     Incomplete(&'static str),
-    #[fail(display = "Invalid sum variant. There are {} options, but found variant tag {}", _0, _1)]
+    #[fail(
+        display = "Invalid sum variant. There are {} options, but found variant tag {}",
+        _0, _1
+    )]
     InvalidSumVariant(usize, usize),
-    #[fail(display = "Excess data at end of blob. Finished parsing with {} bytes remaining out of {} total", _0, _1)]
+    #[fail(
+        display = "Excess data at end of blob. Finished parsing with {} bytes remaining out of {} total",
+        _0, _1
+    )]
     Excess(usize, usize),
 }
 
@@ -242,7 +246,6 @@ fn parse_hash(bytes: &[u8]) -> Result<Hash, BinaryRADTInstantiationError> {
         Err(BinaryRADTInstantiationError::Incomplete("a hash"))
     }
 }
-
 
 pub struct Db<'a> {
     pub env: &'a rkv::Rkv,
@@ -277,11 +280,15 @@ pub enum DBFailure {
     BrokenTypedef,
     #[fail(display = "A typing's type hash doesn't point to a type")]
     UntypedTyping,
-    #[fail(display = "The typing {:?} couldn't be interpreted as a {:?}:\n{}", hash, target_type, err)]
+    #[fail(
+        display = "The typing {:?} couldn't be interpreted as a {:?}:\n{}",
+        hash, target_type, err
+    )]
     BrokenTyping {
         hash: Hash,
         target_type: TypeRef,
-        #[cause] err: BinaryRADTInstantiationError,
+        #[cause]
+        err: BinaryRADTInstantiationError,
     },
 }
 
@@ -298,22 +305,25 @@ impl<'a> Db<'a> {
     pub fn put(&self, item: &impl Storable) -> Result<(), DBFailure> {
         // FIXME - handle errors properly here
         let mut writer = self.env.write().unwrap();
-        self.store.put(&mut writer, &item.hash(), &Value::Blob(&item.all_bytes()))
+        self.store
+            .put(&mut writer, &item.hash(), &Value::Blob(&item.all_bytes()))
             .map_err(|e| DBFailure::RkvError(e))?;
 
-        writer.commit()
-            .map_err(|e| DBFailure::RkvError(e))?;
+        writer.commit().map_err(|e| DBFailure::RkvError(e))?;
 
         Ok(())
     }
 
     pub fn get_bytes(&self, hash: Hash) -> Result<Vec<u8>, DBFailure> {
         let reader = self.env.read().expect("reader");
-        let r = self.store.get(&reader, &hash).map_err(|e| { DBFailure::RkvError(e) })?;
+        let r = self
+            .store
+            .get(&reader, &hash)
+            .map_err(|e| DBFailure::RkvError(e))?;
         match r {
             Some(Value::Blob(bytes)) => Ok(bytes.into()),
-            Some(_)                  => Err(DBFailure::NonBlob(hash)),
-            None                     => Err(DBFailure::NotFound(hash)),
+            Some(_) => Err(DBFailure::NonBlob(hash)),
+            None => Err(DBFailure::NotFound(hash)),
         }
     }
 
@@ -321,30 +331,40 @@ impl<'a> Db<'a> {
         let bytes = self.get_bytes(hash)?;
         match decode_item(&bytes) {
             Err(e) => Err(DBFailure::ParseError(hash, format!("{:?}", e))),
-            Ok((more, LiteralItem::Blob(b))) => Ok(Item::Blob(b)),
-            Ok((more, LiteralItem::Typing(typing))) => {
+            Ok((_, LiteralItem::Blob(b))) => Ok(Item::Blob(b)),
+            Ok((_, LiteralItem::Typing(typing))) => {
                 if typing.kind.definition == BLOB_TYPE_HASH {
                     return Ok(Item::BlobRef(typing.data));
                 } else if typing.kind.definition == RADT_TYPE_HASH {
                     let definition_bytes = self.get_bytes(typing.data)?;
-                    let definition_blob = match decode_item(&definition_bytes).map_err(|e| DBFailure::ParseError(hash, format!("{:?}", e)))? {
+                    let definition_blob = match decode_item(&definition_bytes)
+                        .map_err(|e| DBFailure::ParseError(hash, format!("{:?}", e)))?
+                    {
                         (_, LiteralItem::Typing(_)) => Err(DBFailure::BrokenTypedef),
                         (_, LiteralItem::Blob(b)) => Ok(b),
                     }?;
-                    let (more, def) = all_consuming(RADT::decode)(&definition_blob.bytes).map_err(|e| DBFailure::ParseError(hash, format!("{:?}", e)))?;
+                    let (_, def) = all_consuming(RADT::decode)(&definition_blob.bytes)
+                        .map_err(|e| DBFailure::ParseError(hash, format!("{:?}", e)))?;
                     return Ok(Item::TypeDef(def));
                 } else {
                     match self.get(typing.kind.definition)? {
-                        Item::Blob(_) | Item::BlobRef(_) | Item::Value(_,_) => Err(DBFailure::UntypedTyping),
+                        Item::Blob(_) | Item::BlobRef(_) | Item::Value(_, _) => {
+                            Err(DBFailure::UntypedTyping)
+                        }
                         Item::TypeDef(radt) => {
                             let instance_bytes = self.get_bytes(typing.data)?;
-                            let instance = validate_radt_instance_bytes(&radt, typing.kind.item, &instance_bytes[1..]).map_err(|e| DBFailure::BrokenTyping {
+                            let instance = validate_radt_instance_bytes(
+                                &radt,
+                                typing.kind.item,
+                                &instance_bytes[1..],
+                            )
+                            .map_err(|e| DBFailure::BrokenTyping {
                                 hash,
                                 target_type: typing.kind,
                                 err: e,
                             })?;
                             Ok(Item::Value(typing.kind, instance))
-                        },
+                        }
                     }
                 }
             }
@@ -355,13 +375,15 @@ impl<'a> Db<'a> {
         for expected in typings {
             let bytes = self.get_bytes(expected.reference)?;
             match decode_item(&bytes[..]) {
-                Err(e) => {
+                Err(_) => {
                     Err(TypingApplicationFailure::ParseError(expected.reference))?;
-                },
-                Ok((_,LiteralItem::Blob(_))) => {
-                    Err(TypingApplicationFailure::UntypedReference(expected.reference))?;
-                },
-                Ok((_,LiteralItem::Typing(typing))) => {
+                }
+                Ok((_, LiteralItem::Blob(_))) => {
+                    Err(TypingApplicationFailure::UntypedReference(
+                        expected.reference,
+                    ))?;
+                }
+                Ok((_, LiteralItem::Typing(typing))) => {
                     if typing.kind != expected.kind {
                         Err(TypingApplicationFailure::MistypedReference {
                             reference: expected.reference,
@@ -376,23 +398,22 @@ impl<'a> Db<'a> {
     }
 }
 
-
 #[derive(Debug, Fail)]
 enum TypingApplicationFailure {
     #[fail(display = "error parsing sub-field {:?}", _0)]
     ParseError(Hash),
-    #[fail(display = "sub-field referencing non-existant value {:?}", _0)]
-    DanglingReference(Hash),
     #[fail(display = "found blob instead of typing for sub-field ({:?})", _0)]
     UntypedReference(Hash),
-    #[fail(display = "prereq {:?} is of wrong type. Expected {:?}, found {:?}", reference, expected_type, actual_type)]
+    #[fail(
+        display = "prereq {:?} is of wrong type. Expected {:?}, found {:?}",
+        reference, expected_type, actual_type
+    )]
     MistypedReference {
         reference: Hash,
         expected_type: TypeRef,
         actual_type: TypeRef,
-    }
+    },
 }
-
 
 // recursive adt
 // allows cyclical references
@@ -420,38 +441,27 @@ impl Decodable for RADT {
         let (more, uniq) = take(16u8)(bytes)?;
         let (rest, items) = length_count!(more, be_u64, RADTItem::decode)?;
 
-        let mut uniqueness = [0;16];
+        let mut uniqueness = [0; 16];
         uniqueness.copy_from_slice(uniq);
         Ok((rest, RADT { uniqueness, items }))
     }
 }
 
-fn noop(b: &[u8]) -> IResult<&[u8], ()> {
-    Ok((b, ()))
-}
-
 #[derive(Debug)]
 pub enum RADTValue {
     Hash(Hash),
-    Sum {
-        kind: u8,
-        value: Box<RADTValue>,
-    },
+    Sum { kind: u8, value: Box<RADTValue> },
     Product(Vec<RADTValue>),
 }
 
 impl Serializable for RADTValue {
     fn bytes_into(&self, v: &mut Vec<u8>) {
         match self {
-            RADTValue::Hash(h) => {
-                v.extend_from_slice(&h.0[..])
-            },
-            RADTValue::Sum {
-                kind, value
-            } => {
+            RADTValue::Hash(h) => v.extend_from_slice(&h.0[..]),
+            RADTValue::Sum { kind, value } => {
                 v.push(*kind);
                 value.bytes_into(v);
-            },
+            }
             RADTValue::Product(subs) => {
                 for sub in subs {
                     sub.bytes_into(v);
@@ -466,29 +476,57 @@ impl Storable for RADTValue {
 
 // We don't need to return the expected typings here because we only interpret bytes as an instance
 // if there's already a typing, and we only make the typing if all the expected typings check out.
-pub fn validate_radt_instance_bytes(t: &RADT, idx: usize, bytes: &[u8]) -> Result<RADTValue, BinaryRADTInstantiationError> {
+pub fn validate_radt_instance_bytes(
+    t: &RADT,
+    idx: usize,
+    bytes: &[u8],
+) -> Result<RADTValue, BinaryRADTInstantiationError> {
     let (value, rest) = inner_validate_radt_instance_bytes(&t.items, &t.items[idx], bytes)?;
     if rest.len() > 0 {
-        Err(BinaryRADTInstantiationError::Excess(rest.len(), bytes.len()))
+        Err(BinaryRADTInstantiationError::Excess(
+            rest.len(),
+            bytes.len(),
+        ))
     } else {
         Ok(value)
     }
 }
 
-pub fn inner_validate_radt_instance_bytes<'a, 'b>(base_items: &'a [RADTItem], t: &'a RADTItem, bytes: &'b [u8]) -> Result<(RADTValue, &'b [u8]), BinaryRADTInstantiationError> {
+pub fn inner_validate_radt_instance_bytes<'a, 'b>(
+    base_items: &'a [RADTItem],
+    t: &'a RADTItem,
+    bytes: &'b [u8],
+) -> Result<(RADTValue, &'b [u8]), BinaryRADTInstantiationError> {
     match t {
-        RADTItem::ExternalType(type_hash, idx) => Ok((RADTValue::Hash(parse_hash(bytes)?), &bytes[32..])),
+        RADTItem::ExternalType(_,_) => {
+            Ok((RADTValue::Hash(parse_hash(bytes)?), &bytes[32..]))
+        }
         RADTItem::Sum(variants) => {
             if bytes.len() == 0 {
-                return Err(BinaryRADTInstantiationError::Incomplete("a sum variant tag"))
+                return Err(BinaryRADTInstantiationError::Incomplete(
+                    "a sum variant tag",
+                ));
             }
             let variant = bytes[0];
             if variant as usize >= variants.len() {
-                return Err(BinaryRADTInstantiationError::InvalidSumVariant(variants.len(), variant as usize))
+                return Err(BinaryRADTInstantiationError::InvalidSumVariant(
+                    variants.len(),
+                    variant as usize,
+                ));
             }
-            let (inner, rest) = inner_validate_radt_instance_bytes(base_items, &variants[variant as usize], &bytes[1..])?;
-            Ok((RADTValue::Sum {kind: variant, value: Box::new(inner)}, rest))
-        },
+            let (inner, rest) = inner_validate_radt_instance_bytes(
+                base_items,
+                &variants[variant as usize],
+                &bytes[1..],
+            )?;
+            Ok((
+                RADTValue::Sum {
+                    kind: variant,
+                    value: Box::new(inner),
+                },
+                rest,
+            ))
+        }
         RADTItem::Product(fields) => {
             let mut values = Vec::new();
             let mut rest = bytes;
@@ -498,77 +536,114 @@ pub fn inner_validate_radt_instance_bytes<'a, 'b>(base_items: &'a [RADTItem], t:
                 rest = more;
             }
             Ok((RADTValue::Product(values), rest))
-        },
+        }
         RADTItem::CycleRef(idx) => {
             inner_validate_radt_instance_bytes(base_items, &base_items[*idx], bytes)
-        },
+        }
     }
 }
-
 
 #[derive(Debug, Fail)]
 pub enum StructuredRADTInstantiationError {
     #[fail(display = "Expected a {}, found a {}", _0, _1)]
     Mismatch(&'static str, &'static str),
-    #[fail(display = "Invalid sum variant. There are {} options, but found variant tag {}", _0, _1)]
+    #[fail(
+        display = "Invalid sum variant. There are {} options, but found variant tag {}",
+        _0, _1
+    )]
     InvalidSumVariant(usize, usize),
-    #[fail(display = "Invalid number of product fields. Expected {}, found {}", _0, _1)]
+    #[fail(
+        display = "Invalid number of product fields. Expected {}, found {}",
+        _0, _1
+    )]
     InvalidProductFieldCount(usize, usize),
-    #[fail(display = "Invalid cycle variant. There are {} options, but found reference to item {}", _0, _1)]
+    #[fail(
+        display = "Invalid cycle variant. There are {} options, but found reference to item {}",
+        _0, _1
+    )]
     InvalidCycleRef(usize, usize),
 }
 
-pub fn validate_radt_instance(t: &RADT, index: usize, value: &RADTValue) -> Result<Vec<ExpectedTyping>, StructuredRADTInstantiationError> {
+pub fn validate_radt_instance(
+    t: &RADT,
+    index: usize,
+    value: &RADTValue,
+) -> Result<Vec<ExpectedTyping>, StructuredRADTInstantiationError> {
     if index >= t.items.len() {
-        Err(StructuredRADTInstantiationError::InvalidCycleRef(t.items.len(), index))
+        Err(StructuredRADTInstantiationError::InvalidCycleRef(
+            t.items.len(),
+            index,
+        ))
     } else {
         inner_validate_radt_instance(&t.items, &t.items[index], value)
     }
 }
 
-fn inner_validate_radt_instance(base_items: &[RADTItem], current_item: &RADTItem, value: &RADTValue) -> Result<Vec<ExpectedTyping>, StructuredRADTInstantiationError> {
+fn inner_validate_radt_instance(
+    base_items: &[RADTItem],
+    current_item: &RADTItem,
+    value: &RADTValue,
+) -> Result<Vec<ExpectedTyping>, StructuredRADTInstantiationError> {
     match current_item {
-        RADTItem::ExternalType(def, idx) => {
-            match value {
-                RADTValue::Sum{..} => Err(StructuredRADTInstantiationError::Mismatch("hash", "sum")),
-                RADTValue::Product(_) => Err(StructuredRADTInstantiationError::Mismatch("hash", "product")),
-                RADTValue::Hash(val) => Ok(vec![ExpectedTyping { reference: *val, kind: TypeRef { definition: *def, item: *idx } }]),
+        RADTItem::ExternalType(def, idx) => match value {
+            RADTValue::Sum { .. } => Err(StructuredRADTInstantiationError::Mismatch("hash", "sum")),
+            RADTValue::Product(_) => Err(StructuredRADTInstantiationError::Mismatch(
+                "hash", "product",
+            )),
+            RADTValue::Hash(val) => Ok(vec![ExpectedTyping {
+                reference: *val,
+                kind: TypeRef {
+                    definition: *def,
+                    item: *idx,
+                },
+            }]),
+        },
+        RADTItem::Sum(subs) => match value {
+            RADTValue::Hash(_) => Err(StructuredRADTInstantiationError::Mismatch("sum", "hash")),
+            RADTValue::Product(_) => {
+                Err(StructuredRADTInstantiationError::Mismatch("sum", "product"))
+            }
+            RADTValue::Sum { kind, value } => {
+                if (*kind as usize) >= subs.len() {
+                    Err(StructuredRADTInstantiationError::InvalidSumVariant(
+                        subs.len(),
+                        *kind as usize,
+                    ))
+                } else {
+                    inner_validate_radt_instance(base_items, &subs[*kind as usize], value)
+                }
             }
         },
-        RADTItem::Sum(subs) => {
-            match value {
-                RADTValue::Hash(_) => Err(StructuredRADTInstantiationError::Mismatch("sum", "hash")),
-                RADTValue::Product(_) => Err(StructuredRADTInstantiationError::Mismatch("sum", "product")),
-                RADTValue::Sum {kind, value} => {
-                    if (*kind as usize) >= subs.len() {
-                        Err(StructuredRADTInstantiationError::InvalidSumVariant(subs.len(), *kind as usize))
-                    } else {
-                        inner_validate_radt_instance(base_items, &subs[*kind as usize], value)
-                    }
-                },
+        RADTItem::Product(subs) => match value {
+            RADTValue::Hash(_) => Err(StructuredRADTInstantiationError::Mismatch(
+                "product", "hash",
+            )),
+            RADTValue::Sum { .. } => {
+                Err(StructuredRADTInstantiationError::Mismatch("product", "sum"))
             }
-        }
-        RADTItem::Product(subs) => {
-            match value {
-                RADTValue::Hash(_) => Err(StructuredRADTInstantiationError::Mismatch("product", "hash")),
-                RADTValue::Sum {..} => Err(StructuredRADTInstantiationError::Mismatch("product", "sum")),
-                RADTValue::Product(values) => {
-                    if subs.len() != values.len() {
-                        Err(StructuredRADTInstantiationError::InvalidProductFieldCount(subs.len(), values.len()))
-                    } else {
-                        let mut results = Vec::new();
-                        for i in 0..subs.len() {
-                            let prereqs = inner_validate_radt_instance(base_items, &subs[i], &values[i])?;
-                            results.extend(prereqs);
-                        }
-                        Ok(results)
+            RADTValue::Product(values) => {
+                if subs.len() != values.len() {
+                    Err(StructuredRADTInstantiationError::InvalidProductFieldCount(
+                        subs.len(),
+                        values.len(),
+                    ))
+                } else {
+                    let mut results = Vec::new();
+                    for i in 0..subs.len() {
+                        let prereqs =
+                            inner_validate_radt_instance(base_items, &subs[i], &values[i])?;
+                        results.extend(prereqs);
                     }
-                },
+                    Ok(results)
+                }
             }
         },
         RADTItem::CycleRef(idx) => {
-            if *idx>= base_items.len() {
-                Err(StructuredRADTInstantiationError::InvalidCycleRef(base_items.len(), *idx))
+            if *idx >= base_items.len() {
+                Err(StructuredRADTInstantiationError::InvalidCycleRef(
+                    base_items.len(),
+                    *idx,
+                ))
             } else {
                 inner_validate_radt_instance(base_items, &base_items[*idx], value)
             }
@@ -581,39 +656,38 @@ fn test_validate() {
     let list = RADTItem::Sum(vec![RADTItem::CycleRef(1), RADTItem::CycleRef(2)]);
     let nil = RADTItem::Product(Vec::new());
     let cons = RADTItem::Product(vec![
-                    RADTItem::ExternalType(BLOB_TYPE_HASH, 12),
-                    RADTItem::CycleRef(0),
+        RADTItem::ExternalType(BLOB_TYPE_HASH, 12),
+        RADTItem::CycleRef(0),
     ]);
     let blob_list = RADT {
         uniqueness: [0; 16],
         items: vec![list, nil, cons],
     };
 
-    let value = RADTValue::Sum{
+    let value = RADTValue::Sum {
         kind: 1,
-        value: Box::new(
-            RADTValue::Product(vec![
-                RADTValue::Hash(RADT_TYPE_HASH),
-                RADTValue::Sum {
-                    kind: 0,
-                    value: Box::new(RADTValue::Product(Vec::new())),
-                },
-            ])
-        ),
+        value: Box::new(RADTValue::Product(vec![
+            RADTValue::Hash(RADT_TYPE_HASH),
+            RADTValue::Sum {
+                kind: 0,
+                value: Box::new(RADTValue::Product(Vec::new())),
+            },
+        ])),
     };
 
     let prereqs = validate_radt_instance(&blob_list, 0, &value).expect("should validate");
 
-    assert_eq!(prereqs, vec![
-               ExpectedTyping {
-                   kind: TypeRef {
-                       definition: BLOB_TYPE_HASH,
-                       item: 12,
-                   },
-                   reference: RADT_TYPE_HASH,
-               }]);
+    assert_eq!(
+        prereqs,
+        vec![ExpectedTyping {
+            kind: TypeRef {
+                definition: BLOB_TYPE_HASH,
+                item: 12,
+            },
+            reference: RADT_TYPE_HASH,
+        }]
+    );
 }
-
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RADTItem {
@@ -625,16 +699,21 @@ pub enum RADTItem {
 }
 
 fn radt_decode_external(bytes: &[u8]) -> IResult<&[u8], RADTItem> {
-    map(tuple((
-        map(take(32u8), Hash::sure_from),
-        map(take(8u8), |b: &[u8]| usize::from_be_bytes(b.try_into().unwrap())),
-    )), |(h, idx)| RADTItem::ExternalType(h, idx))(bytes)
+    map(
+        tuple((
+            map(take(32u8), Hash::sure_from),
+            map(take(8u8), |b: &[u8]| {
+                usize::from_be_bytes(b.try_into().unwrap())
+            }),
+        )),
+        |(h, idx)| RADTItem::ExternalType(h, idx),
+    )(bytes)
 }
 fn radt_decode_sum(bytes: &[u8]) -> IResult<&[u8], RADTItem> {
-    map(radt_decode_items, |items| { RADTItem::Sum(items) })(bytes)
+    map(radt_decode_items, |items| RADTItem::Sum(items))(bytes)
 }
 fn radt_decode_product(bytes: &[u8]) -> IResult<&[u8], RADTItem> {
-    map(radt_decode_items, |items| { RADTItem::Product(items) })(bytes)
+    map(radt_decode_items, |items| RADTItem::Product(items))(bytes)
 }
 fn radt_decode_items(bytes: &[u8]) -> IResult<&[u8], Vec<RADTItem>> {
     length_count!(bytes, be_u64, RADTItem::decode)
@@ -659,10 +738,7 @@ impl Decodable for RADTItem {
 
 #[test]
 fn test_radt_item_recode() {
-    let item = RADTItem::Product(vec![
-        RADTItem::CycleRef(12),
-        RADTItem::CycleRef(12),
-    ]);
+    let item = RADTItem::Product(vec![RADTItem::CycleRef(12), RADTItem::CycleRef(12)]);
     let bytes = item.bytes();
     let (empty, item2) = RADTItem::decode(&bytes).expect("hey");
     assert_eq!(item, item2);
@@ -675,8 +751,8 @@ fn test_radt_recode() {
         items: vec![
             RADTItem::Product(vec![]),
             RADTItem::Product(vec![
-                  RADTItem::ExternalType(BLOB_TYPE_HASH, 0),
-                  RADTItem::CycleRef(0),
+                RADTItem::ExternalType(BLOB_TYPE_HASH, 0),
+                RADTItem::CycleRef(0),
             ]),
         ],
     };
@@ -723,7 +799,6 @@ fn test_normalize() {
     //
     // 2, 0, 3, 1
 
-
     let mut r = RADT {
         uniqueness: [0; 16],
         items: vec![
@@ -750,17 +825,17 @@ fn test_normalize() {
 #[test]
 fn test_radt_mapping() {
     let mut r = RADTItem::Product(vec![
-                RADTItem::CycleRef(0),
-                RADTItem::CycleRef(1),
-                RADTItem::CycleRef(2),
-                RADTItem::CycleRef(3),
+        RADTItem::CycleRef(0),
+        RADTItem::CycleRef(1),
+        RADTItem::CycleRef(2),
+        RADTItem::CycleRef(3),
     ]);
 
     let expected = RADTItem::Product(vec![
-                    RADTItem::CycleRef(2),
-                    RADTItem::CycleRef(1),
-                    RADTItem::CycleRef(3),
-                    RADTItem::CycleRef(0),
+        RADTItem::CycleRef(2),
+        RADTItem::CycleRef(1),
+        RADTItem::CycleRef(3),
+        RADTItem::CycleRef(0),
     ]);
     r.update_refs(&vec![2, 1, 3, 0]);
     assert_eq!(r, expected);
@@ -787,7 +862,7 @@ impl Serializable for RADTItem {
                 result.push(0);
                 result.extend_from_slice(&h.0[..]);
                 result.extend_from_slice(&idx.to_be_bytes());
-            },
+            }
             RADTItem::Sum(items) => {
                 // TODO: maybe sort these somehow for easier structural comparison?
                 result.push(1);
@@ -795,18 +870,18 @@ impl Serializable for RADTItem {
                 for item in items {
                     item.bytes_into(result);
                 }
-            },
+            }
             RADTItem::Product(items) => {
                 result.push(2);
                 result.extend_from_slice(&items.len().to_be_bytes());
                 for item in items {
                     item.bytes_into(result);
                 }
-            },
+            }
             RADTItem::CycleRef(index) => {
                 result.push(3);
                 result.extend_from_slice(&index.to_be_bytes());
-            },
+            }
         }
     }
 }
@@ -824,7 +899,7 @@ impl RADTItem {
                 result.push(0);
                 result.extend_from_slice(&h.0[..]);
                 result.extend_from_slice(&idx.to_be_bytes());
-            },
+            }
             RADTItem::Sum(items) => {
                 // TODO: maybe sort these somehow for easier structural comparison?
                 result.push(1);
@@ -832,33 +907,43 @@ impl RADTItem {
                 for item in items {
                     item.zero_bytes_into(result);
                 }
-            },
+            }
             RADTItem::Product(items) => {
                 result.push(2);
                 result.extend_from_slice(&items.len().to_be_bytes());
                 for item in items {
                     item.zero_bytes_into(result);
                 }
-            },
-            RADTItem::CycleRef(index) => {
+            }
+            // here's where the zeroing comes in
+            RADTItem::CycleRef(_) => {
                 result.push(3);
                 result.extend_from_slice(&(0 as usize).to_be_bytes());
-            },
+            }
         }
     }
 
     fn update_refs(&mut self, map: &[usize]) {
         match self {
-            RADTItem::ExternalType(_,_) => {},
-            RADTItem::CycleRef(n) => { *n = map[*n]; },
-            RADTItem::Sum(items) => { for sub in items { sub.update_refs(map); } },
-            RADTItem::Product(items) => { for sub in items { sub.update_refs(map); } },
+            RADTItem::ExternalType(_, _) => {}
+            RADTItem::CycleRef(n) => {
+                *n = map[*n];
+            }
+            RADTItem::Sum(items) => {
+                for sub in items {
+                    sub.update_refs(map);
+                }
+            }
+            RADTItem::Product(items) => {
+                for sub in items {
+                    sub.update_refs(map);
+                }
+            }
         }
     }
 }
 
-
-fn main() -> Result<(), Error>{
+fn main() -> Result<(), Error> {
     // let args: Vec<String> = env::args().collect();
     // println!("{:?}", args);
 
@@ -902,12 +987,10 @@ fn main() -> Result<(), Error>{
     uniq[15] = 239;
     let double_ref_type = RADT {
         uniqueness: uniq,
-        items: vec![
-            RADTItem::Product(vec![
-                RADTItem::ExternalType(BLOB_TYPE_HASH, 0),
-                RADTItem::ExternalType(BLOB_TYPE_HASH, 0),
-            ])
-        ],
+        items: vec![RADTItem::Product(vec![
+            RADTItem::ExternalType(BLOB_TYPE_HASH, 0),
+            RADTItem::ExternalType(BLOB_TYPE_HASH, 0),
+        ])],
     };
 
     let double_ref_typedef = Typing {
@@ -918,8 +1001,6 @@ fn main() -> Result<(), Error>{
         data: double_ref_type.hash(),
     };
 
-    
-
     db.put(&blob1)?;
     db.put(&blob2)?;
     db.put(&ref1)?;
@@ -927,10 +1008,10 @@ fn main() -> Result<(), Error>{
     db.put(&double_ref_type)?;
     db.put(&double_ref_typedef)?;
 
-
-    let instance = RADTValue::Product(
-        vec![RADTValue::Hash(ref1.hash()), RADTValue::Hash(ref2.hash())],
-    );
+    let instance = RADTValue::Product(vec![
+        RADTValue::Hash(ref1.hash()),
+        RADTValue::Hash(ref2.hash()),
+    ]);
 
     let confirmations = validate_radt_instance(&double_ref_type, 0, &instance)?;
     db.confirm_typings(&confirmations)?;
@@ -946,10 +1027,9 @@ fn main() -> Result<(), Error>{
     db.put(&instance)?;
     db.put(&typing)?;
 
-
     let (typeref, val) = match db.get(typing.hash())? {
-         Item::Value(t, v) => (t,v),
-         _ => { bail!("nah") },
+        Item::Value(t, v) => (t, v),
+        _ => bail!("nah"),
     };
 
     dbg!(typeref);
