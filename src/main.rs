@@ -40,8 +40,8 @@ impl Hash {
     }
 }
 
-impl Storable for Hash {
-    fn into_bytes(&self, v: &mut Vec<u8>) {
+impl Serializable for Hash {
+    fn bytes_into(&self, v: &mut Vec<u8>) {
         v.extend_from_slice(&self.0);
     }
 }
@@ -65,7 +65,26 @@ impl fmt::Debug for Hash {
     }
 }
 
-pub trait Storable {
+pub trait Storable: Serializable {
+    const PREFIX: u8;
+
+    fn all_bytes(&self) -> Vec<u8> {
+        let mut v = Vec::new();
+        v.push(Self::PREFIX);
+        self.bytes_into(&mut v);
+        v
+    }
+
+    fn hash(&self) -> Hash {
+        let mut val: [u8; 32] = Default::default();
+        let mut hasher = Sha3_256::new();
+        hasher.input(&self.all_bytes());
+        val.copy_from_slice(hasher.result().as_ref());
+        Hash(val)
+    }
+}
+
+pub trait Serializable {
     fn bytes_into(&self, v: &mut Vec<u8>);
 
     fn bytes(&self) -> Vec<u8> {
@@ -74,13 +93,6 @@ pub trait Storable {
         v
     }
 
-    fn hash(&self) -> Hash {
-        let mut val: [u8; 32] = Default::default();
-        let mut hasher = Sha3_256::new();
-        hasher.input(&self.bytes());
-        val.copy_from_slice(hasher.result().as_ref());
-        Hash(val)
-    }
 }
 
 pub trait Decodable: Sized {
@@ -113,10 +125,13 @@ impl fmt::Debug for Blob {
     }
 }
 
-impl Storable for Blob {
+impl Serializable for Blob {
     fn bytes_into(&self, v: &mut Vec<u8>) {
         v.extend_from_slice(&self.bytes);
     }
+}
+impl Storable for Blob {
+    const PREFIX: u8 = 0;
 }
 
 impl Decodable for Blob {
@@ -129,17 +144,18 @@ impl Decodable for Blob {
 pub static BLOB_TYPE_HASH: Hash = Hash(hex!(
     "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"
 ));
-pub static ADT_TYPE_HASH: Hash = Hash(hex!(
+pub static RADT_TYPE_HASH: Hash = Hash(hex!(
     "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001"
 ));
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct TypeRef {
     definition: Hash,
     item: usize,
 }
-impl Storable for TypeRef {
+impl Serializable for TypeRef {
     fn bytes_into(&self, v: &mut Vec<u8>) {
-        v.extend_from_slice(self.definition.0);
+        v.extend_from_slice(&self.definition.0);
         v.extend_from_slice(&self.item.to_be_bytes());
     }
 }
@@ -151,18 +167,24 @@ impl Decodable for TypeRef {
     }
 }
 
-impl Storable for usize {
-    fn bytes_into(self, v: &mut Vec<u8>) {
+impl Serializable for usize {
+    fn bytes_into(&self, v: &mut Vec<u8>) {
         v.extend_from_slice(&self.to_be_bytes());
     }
 }
 impl Decodable for usize {
     fn decode(bytes: &[u8]) -> IResult<&[u8], usize> {
-        map(take(8u8), usize::from_be_bytes)(bytes)
+        map(take(8u8), from_sure_be_bytes)(bytes)
     }
 }
 
-#[derive(Debug)]
+fn from_sure_be_bytes(bytes: &[u8]) -> usize {
+    let mut a = [0; 8];
+    a.copy_from_slice(bytes);
+    usize::from_be_bytes(a)
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Typing {
     // Either this typing represents a type or a value.
     // If it represents a type, then type_hash will be a special value
@@ -175,11 +197,14 @@ pub struct Typing {
     pub data: Hash,
 }
 
-impl Storable for Typing {
+impl Serializable for Typing {
     fn bytes_into(&self, v: &mut Vec<u8>) {
         self.kind.bytes_into(v);
         self.data.bytes_into(v);
     }
+}
+impl Storable for Typing {
+    const PREFIX: u8 = 1;
 }
 
 impl Decodable for Typing {
@@ -190,52 +215,18 @@ impl Decodable for Typing {
     }
 }
 
-#[derive(Debug)]
-pub enum ADTValue {
-    Hash(Hash),
-    Sum {
-        kind: u8,
-        value: Box<ADTValue>,
-    },
-    Product(Vec<ADTValue>),
-}
 
-impl ADTValue {
-    pub fn hydrate(kind: &ADT, bytes: &[u8]) -> Result<ADTValue, BinaryADTInstantiationError> {
-        validate_adt_instance_bytes(kind, bytes)
-    }
-}
-
-impl Storable for ADTValue {
-    fn bytes_into(&self, v: &mut Vec<u8>) {
-        match self {
-            ADTValue::Hash(h) => {
-                v.extend_from_slice(&h.0[..])
-            },
-            ADTValue::Sum {
-                kind, value
-            } => {
-                v.push(*kind);
-                value.bytes_into(v);
-            },
-            ADTValue::Product(subs) => {
-                for sub in subs {
-                    sub.bytes_into(v);
-                }
-            }
-        }
-    }
-}
-
-
-#[derive(Debug)]
+// same structure as Typing, but the Hash fields mean different things.
+// For typing, that's the hash of the blob containing the value. For this
+// one, it's a hash which should point to a typing of the same type.
+#[derive(Debug, PartialEq, Eq)]
 pub struct ExpectedTyping {
     pub reference: Hash,
     pub kind: TypeRef,
 }
 
 #[derive(Debug, Fail)]
-pub enum BinaryADTInstantiationError {
+pub enum BinaryRADTInstantiationError {
     #[fail(display = "Reached end of blob while parsing {}", _0)]
     Incomplete(&'static str),
     #[fail(display = "Invalid sum variant. There are {} options, but found variant tag {}", _0, _1)]
@@ -244,49 +235,11 @@ pub enum BinaryADTInstantiationError {
     Excess(usize, usize),
 }
 
-// We don't need to return the expected typings here because we only interpret bytes as an instance
-// if there's already a typing, and we only make the typing if all the expected typings check out.
-pub fn validate_adt_instance_bytes(t: &ADT, bytes: &[u8]) -> Result<ADTValue, BinaryADTInstantiationError> {
-    let (value, rest) = inner_validate_adt_instance_bytes(&t.value, bytes)?;
-    if rest.len() > 0 {
-        Err(BinaryADTInstantiationError::Excess(rest.len(), bytes.len()))
-    } else {
-        Ok(value)
-    }
-}
-
-pub fn inner_validate_adt_instance_bytes<'a, 'b>(t: &'a ADTItem, bytes: &'b [u8]) -> Result<(ADTValue, &'b [u8]), BinaryADTInstantiationError> {
-    match t {
-        ADTItem::Hash(type_hash) => Ok((ADTValue::Hash(parse_hash(bytes)?), &bytes[32..])),
-        ADTItem::Sum(variants) => {
-            if bytes.len() == 0 {
-                return Err(BinaryADTInstantiationError::Incomplete("a sum variant tag"))
-            }
-            let variant = bytes[0];
-            if variant as usize >= variants.len() {
-                return Err(BinaryADTInstantiationError::InvalidSumVariant(variants.len(), variant as usize))
-            }
-            let (inner, rest) = inner_validate_adt_instance_bytes(&variants[variant as usize], &bytes[1..])?;
-            Ok((ADTValue::Sum {kind: variant, value: Box::new(inner)}, rest))
-        },
-        ADTItem::Product(fields) => {
-            let mut values = Vec::new();
-            let mut rest = bytes;
-            for field in fields {
-                let (val, more) = inner_validate_adt_instance_bytes(field, rest)?;
-                values.push(val);
-                rest = more;
-            }
-            Ok((ADTValue::Product(values), rest))
-        }
-    }
-}
-
-fn parse_hash(bytes: &[u8]) -> Result<Hash, BinaryADTInstantiationError> {
+fn parse_hash(bytes: &[u8]) -> Result<Hash, BinaryRADTInstantiationError> {
     if bytes.len() >= 32 {
         Ok(Hash::sure_from(&bytes[..32]))
     } else {
-        Err(BinaryADTInstantiationError::Incomplete("a hash"))
+        Err(BinaryRADTInstantiationError::Incomplete("a hash"))
     }
 }
 
@@ -300,8 +253,8 @@ pub struct Db<'a> {
 pub enum Item {
     Blob(Blob),
     BlobRef(Hash),
-    Type(ADT),
-    Value(ADT, ADTValue),
+    TypeDef(RADT),
+    Value(TypeRef, RADTValue),
 }
 
 #[derive(Debug)]
@@ -327,8 +280,8 @@ pub enum DBFailure {
     #[fail(display = "The typing {:?} couldn't be interpreted as a {:?}:\n{}", hash, target_type, err)]
     BrokenTyping {
         hash: Hash,
-        target_type: Hash,
-        #[cause] err: BinaryADTInstantiationError,
+        target_type: TypeRef,
+        #[cause] err: BinaryRADTInstantiationError,
     },
 }
 
@@ -345,12 +298,12 @@ impl<'a> Db<'a> {
     pub fn put(&self, item: &impl Storable) -> Result<(), DBFailure> {
         // FIXME - handle errors properly here
         let mut writer = self.env.write().unwrap();
-        if let Err(e) = self.store.put(&mut writer, &item.hash(), &Value::Blob(&item.bytes())) {
-            return Err(DBFailure::RkvError(e));
-        }
-        if let Err(e) = writer.commit() {
-            return Err(DBFailure::RkvError(e));
-        }
+        self.store.put(&mut writer, &item.hash(), &Value::Blob(&item.all_bytes()))
+            .map_err(|e| DBFailure::RkvError(e))?;
+
+        writer.commit()
+            .map_err(|e| DBFailure::RkvError(e))?;
+
         Ok(())
     }
 
@@ -370,27 +323,27 @@ impl<'a> Db<'a> {
             Err(e) => Err(DBFailure::ParseError(hash, format!("{:?}", e))),
             Ok((more, LiteralItem::Blob(b))) => Ok(Item::Blob(b)),
             Ok((more, LiteralItem::Typing(typing))) => {
-                if typing.type_hash == BLOB_TYPE_HASH {
-                    return Ok(Item::BlobRef(typing.data_hash));
-                } else if typing.type_hash == ADT_TYPE_HASH {
-                    let definition_bytes = self.get_bytes(typing.data_hash)?;
+                if typing.kind.definition == BLOB_TYPE_HASH {
+                    return Ok(Item::BlobRef(typing.data));
+                } else if typing.kind.definition == RADT_TYPE_HASH {
+                    let definition_bytes = self.get_bytes(typing.data)?;
                     let definition_blob = match decode_item(&definition_bytes).map_err(|e| DBFailure::ParseError(hash, format!("{:?}", e)))? {
                         (_, LiteralItem::Typing(_)) => Err(DBFailure::BrokenTypedef),
                         (_, LiteralItem::Blob(b)) => Ok(b),
                     }?;
-                    let (more, kind) = all_consuming(ADT::decode)(&definition_blob.bytes).map_err(|e| DBFailure::ParseError(hash, format!("{:?}", e)))?;
-                    return Ok(Item::Type(kind));
+                    let (more, def) = all_consuming(RADT::decode)(&definition_blob.bytes).map_err(|e| DBFailure::ParseError(hash, format!("{:?}", e)))?;
+                    return Ok(Item::TypeDef(def));
                 } else {
-                    match self.get(typing.type_hash)? {
+                    match self.get(typing.kind.definition)? {
                         Item::Blob(_) | Item::BlobRef(_) | Item::Value(_,_) => Err(DBFailure::UntypedTyping),
-                        Item::Type(kind) => {
-                            let instance_bytes = self.get_bytes(typing.data_hash)?;
-                            let instance = ADTValue::hydrate(&kind, &instance_bytes[1..]).map_err(|e| DBFailure::BrokenTyping {
+                        Item::TypeDef(radt) => {
+                            let instance_bytes = self.get_bytes(typing.data)?;
+                            let instance = validate_radt_instance_bytes(&radt, typing.kind.item, &instance_bytes[1..]).map_err(|e| DBFailure::BrokenTyping {
                                 hash,
-                                target_type: typing.type_hash,
+                                target_type: typing.kind,
                                 err: e,
                             })?;
-                            Ok(Item::Value(kind, instance))
+                            Ok(Item::Value(typing.kind, instance))
                         },
                     }
                 }
@@ -409,11 +362,11 @@ impl<'a> Db<'a> {
                     Err(TypingApplicationFailure::UntypedReference(expected.reference))?;
                 },
                 Ok((_,LiteralItem::Typing(typing))) => {
-                    if typing.type_hash != expected.kind {
+                    if typing.kind != expected.kind {
                         Err(TypingApplicationFailure::MistypedReference {
                             reference: expected.reference,
                             expected_type: expected.kind,
-                            actual_type: typing.type_hash,
+                            actual_type: typing.kind,
                         })?;
                     }
                 }
@@ -435,8 +388,8 @@ enum TypingApplicationFailure {
     #[fail(display = "prereq {:?} is of wrong type. Expected {:?}, found {:?}", reference, expected_type, actual_type)]
     MistypedReference {
         reference: Hash,
-        expected_type: Hash,
-        actual_type: Hash,
+        expected_type: TypeRef,
+        actual_type: TypeRef,
     }
 }
 
@@ -449,7 +402,7 @@ pub struct RADT {
     pub items: Vec<RADTItem>,
 }
 
-impl Storable for RADT {
+impl Serializable for RADT {
     fn bytes_into(&self, v: &mut Vec<u8>) {
         v.extend_from_slice(&self.uniqueness);
         v.extend_from_slice(&self.items.len().to_be_bytes());
@@ -457,6 +410,9 @@ impl Storable for RADT {
             item.bytes_into(v);
         }
     }
+}
+impl Storable for RADT {
+    const PREFIX: u8 = 0;
 }
 
 impl Decodable for RADT {
@@ -466,7 +422,7 @@ impl Decodable for RADT {
 
         let mut uniqueness = [0;16];
         uniqueness.copy_from_slice(uniq);
-        Ok((more, RADT { uniqueness, items }))
+        Ok((rest, RADT { uniqueness, items }))
     }
 }
 
@@ -484,7 +440,7 @@ pub enum RADTValue {
     Product(Vec<RADTValue>),
 }
 
-impl Storable for RADTValue {
+impl Serializable for RADTValue {
     fn bytes_into(&self, v: &mut Vec<u8>) {
         match self {
             RADTValue::Hash(h) => {
@@ -504,44 +460,47 @@ impl Storable for RADTValue {
         }
     }
 }
+impl Storable for RADTValue {
+    const PREFIX: u8 = 0;
+}
 
 // We don't need to return the expected typings here because we only interpret bytes as an instance
 // if there's already a typing, and we only make the typing if all the expected typings check out.
-pub fn validate_radt_instance_bytes(t: &RADT, idx: usize, bytes: &[u8]) -> Result<RADTValue, BinaryADTInstantiationError> {
+pub fn validate_radt_instance_bytes(t: &RADT, idx: usize, bytes: &[u8]) -> Result<RADTValue, BinaryRADTInstantiationError> {
     let (value, rest) = inner_validate_radt_instance_bytes(&t.items, &t.items[idx], bytes)?;
     if rest.len() > 0 {
-        Err(BinaryADTInstantiationError::Excess(rest.len(), bytes.len()))
+        Err(BinaryRADTInstantiationError::Excess(rest.len(), bytes.len()))
     } else {
         Ok(value)
     }
 }
 
-pub fn inner_validate_radt_instance_bytes<'a, 'b>(base_items: &'a [RADTItem], t: &'a RADTItem, bytes: &'b [u8]) -> Result<(RADTValue, &'b [u8]), BinaryADTInstantiationError> {
+pub fn inner_validate_radt_instance_bytes<'a, 'b>(base_items: &'a [RADTItem], t: &'a RADTItem, bytes: &'b [u8]) -> Result<(RADTValue, &'b [u8]), BinaryRADTInstantiationError> {
     match t {
         RADTItem::ExternalType(type_hash, idx) => Ok((RADTValue::Hash(parse_hash(bytes)?), &bytes[32..])),
         RADTItem::Sum(variants) => {
             if bytes.len() == 0 {
-                return Err(BinaryADTInstantiationError::Incomplete("a sum variant tag"))
+                return Err(BinaryRADTInstantiationError::Incomplete("a sum variant tag"))
             }
             let variant = bytes[0];
             if variant as usize >= variants.len() {
-                return Err(BinaryADTInstantiationError::InvalidSumVariant(variants.len(), variant as usize))
+                return Err(BinaryRADTInstantiationError::InvalidSumVariant(variants.len(), variant as usize))
             }
-            let (inner, rest) = inner_validate_radt_instance_bytes(&variants[variant as usize], &bytes[1..])?;
+            let (inner, rest) = inner_validate_radt_instance_bytes(base_items, &variants[variant as usize], &bytes[1..])?;
             Ok((RADTValue::Sum {kind: variant, value: Box::new(inner)}, rest))
         },
         RADTItem::Product(fields) => {
             let mut values = Vec::new();
             let mut rest = bytes;
             for field in fields {
-                let (val, more) = inner_validate_radt_instance_bytes(field, rest)?;
+                let (val, more) = inner_validate_radt_instance_bytes(base_items, field, rest)?;
                 values.push(val);
                 rest = more;
             }
             Ok((RADTValue::Product(values), rest))
         },
         RADTItem::CycleRef(idx) => {
-            inner_validate_radt_instance(base_items, &base_items[*idx], value)
+            inner_validate_radt_instance_bytes(base_items, &base_items[*idx], bytes)
         },
     }
 }
@@ -573,7 +532,7 @@ fn inner_validate_radt_instance(base_items: &[RADTItem], current_item: &RADTItem
             match value {
                 RADTValue::Sum{..} => Err(StructuredRADTInstantiationError::Mismatch("hash", "sum")),
                 RADTValue::Product(_) => Err(StructuredRADTInstantiationError::Mismatch("hash", "product")),
-                RADTValue::Hash(val) => Ok(vec![ExpectedTyping { reference: *val, kind: TypeDef { definition: *def, item: *idx } }]),
+                RADTValue::Hash(val) => Ok(vec![ExpectedTyping { reference: *val, kind: TypeRef { definition: *def, item: *idx } }]),
             }
         },
         RADTItem::Sum(subs) => {
@@ -634,7 +593,7 @@ fn test_validate() {
         kind: 1,
         value: Box::new(
             RADTValue::Product(vec![
-                RADTValue::Hash(ADT_TYPE_HASH),
+                RADTValue::Hash(RADT_TYPE_HASH),
                 RADTValue::Sum {
                     kind: 0,
                     value: Box::new(RADTValue::Product(Vec::new())),
@@ -646,10 +605,12 @@ fn test_validate() {
     let prereqs = validate_radt_instance(&blob_list, 0, &value).expect("should validate");
 
     assert_eq!(prereqs, vec![
-               RADTExpected {
-                   def: BLOB_TYPE_HASH,
-                   index: 12,
-                   value: ADT_TYPE_HASH,
+               ExpectedTyping {
+                   kind: TypeRef {
+                       definition: BLOB_TYPE_HASH,
+                       item: 12,
+                   },
+                   reference: RADT_TYPE_HASH,
                }]);
 }
 
@@ -819,7 +780,7 @@ fn test_transpose() {
     assert_eq!(v, vec![2, 1, 3, 0])
 }
 
-impl Storable for RADTItem {
+impl Serializable for RADTItem {
     fn bytes_into(&self, result: &mut Vec<u8>) {
         match self {
             RADTItem::ExternalType(h, idx) => {
@@ -921,53 +882,73 @@ fn main() -> Result<(), Error>{
         bytes: b"xyz"[..].into(),
     };
 
-    let t1 = Typing {
-        type_hash: BLOB_TYPE_HASH,
-        data_hash: blob1.hash(),
+    let ref1 = Typing {
+        kind: TypeRef {
+            definition: BLOB_TYPE_HASH,
+            item: 0,
+        },
+        data: blob1.hash(),
     };
-    let t2 = Typing {
-        type_hash: BLOB_TYPE_HASH,
-        data_hash: blob2.hash(),
+    let ref2 = Typing {
+        kind: TypeRef {
+            definition: BLOB_TYPE_HASH,
+            item: 0,
+        },
+        data: blob2.hash(),
     };
 
     let mut uniq = [0; 16];
     uniq[0] = 254;
     uniq[15] = 239;
-    let double_ref_type = ADT {
+    let double_ref_type = RADT {
         uniqueness: uniq,
-        value: ADTItem::Product(vec![
-                    ADTItem::Hash(BLOB_TYPE_HASH),
-                    ADTItem::Hash(BLOB_TYPE_HASH)
-        ]),
+        items: vec![
+            RADTItem::Product(vec![
+                RADTItem::ExternalType(BLOB_TYPE_HASH, 0),
+                RADTItem::ExternalType(BLOB_TYPE_HASH, 0),
+            ])
+        ],
     };
 
-    let double_ref_typing = Typing {
-        type_hash: ADT_TYPE_HASH,
-        data_hash: double_ref_type.hash(),
+    let double_ref_typedef = Typing {
+        kind: TypeRef {
+            definition: RADT_TYPE_HASH,
+            item: 0,
+        },
+        data: double_ref_type.hash(),
     };
 
-    let double_instance = ADTValue::Product(
-        vec![ADTValue::Hash(t1.hash()), ADTValue::Hash(t2.hash())],
-    );
     
 
     db.put(&blob1)?;
     db.put(&blob2)?;
-    db.put(&t1)?;
-    db.put(&t2)?;
+    db.put(&ref1)?;
+    db.put(&ref2)?;
     db.put(&double_ref_type)?;
-    db.put(&double_ref_typing)?;
-    db.put(&double_instance)?;
+    db.put(&double_ref_typedef)?;
 
-    let confirmations = validate_adt_instance(&double_ref_type, &double_instance)?;
+
+    let instance = RADTValue::Product(
+        vec![RADTValue::Hash(ref1.hash()), RADTValue::Hash(ref2.hash())],
+    );
+
+    let confirmations = validate_radt_instance(&double_ref_type, 0, &instance)?;
     db.confirm_typings(&confirmations)?;
 
     let typing = Typing {
-        type_hash: double_ref_typing.hash(),
-        data_hash: double_instance.hash(),
+        kind: TypeRef {
+            definition: double_ref_typedef.hash(),
+            item: 0,
+        },
+        data: instance.hash(),
     };
 
+    db.put(&instance)?;
     db.put(&typing)?;
+
+
+    dbg!(db.get(typing.hash()));
+    // dbg!(db.get_bytes(typing.hash()));
 
     // let typing = apply_typing_and_store(&db, &double_ref_type, &double_instance)?;
 
@@ -978,6 +959,7 @@ fn main() -> Result<(), Error>{
     // dbg!(double_instance.hash());
     // dbg!(typing);
 
+    /*
     if let Item::Value(kind, ADTValue::Product(subs)) = db.get(typing.hash())? {
         dbg!(kind);
         for b in subs {
@@ -992,6 +974,7 @@ fn main() -> Result<(), Error>{
         dbg!(blob1.hash());
         dbg!(blob2.hash());
     }
+    */
 
     // match db.get(typing.hash())? {
     //     None => println!("nah"),
