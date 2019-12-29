@@ -546,36 +546,6 @@ pub enum RADTValue {
     Product(Vec<RADTValue>),
 }
 
-type NormalParseError<I> = (I, nom::error::ErrorKind);
-pub enum CustomParseError<I> {
-    Mine(StructuredRADTInstantiationError),
-    Theirs(NormalParseError<I>),
-}
-impl nom::error::ParseError<I> for CustomParseError<I> {
-    use CustomParseError::*;
-    fn from_error_kind(input: I, kind: nom::error::ErrorKind) -> Self {
-        Theirs(NormalParseError<I>::from_error_kind(input, kind))
-    }
-    fn append(input: I, kind: nom::error::ErrorKind, other: Self) -> Self {
-        other
-    }
-}
-
-type StructuredParseInput<'a, 'b> = (&'a [RADTItem], &'a RADTItem, &'b RADTValue);
-impl RADTValue {
-    pub fn validate_as<'a, 'b>((base_items, current_item, current_value): StructuredParseInput<'a, 'b>) -> IResult<StructuredParseInput<'a, 'b>, (), StructuredRADTInstantiationError> {
-        match current_item {
-            RADTItem::ExternalType(def, idx) => {
-                match value {
-                    RADTValue::Sum{..} => Err(Mine(StructuredRADTInstantiationError::Mismatch("hash", "sum"))),
-                    RADTValue::Product(_) => Err(Mine(StructuredRADTInstantiationError::Mismatch("hash", "product"))),
-                    RADTValue::Hash(val) => Ok(vec![RADTExpected { def: *def, index: *idx, value: *val}]),
-                }
-            }
-        }
-    }
-}
-
 #[derive(Debug, Fail)]
 pub enum StructuredRADTInstantiationError {
     #[fail(display = "Expected a {}, found a {}", _0, _1)]
