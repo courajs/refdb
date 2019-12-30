@@ -1,4 +1,4 @@
-#![allow(dead_code,unused_variables,unused_imports)]
+#![allow(unused_mut,dead_code,unused_variables,unused_imports)]
 
 use std::{
     convert::{TryInto},
@@ -9,6 +9,8 @@ use std::{
 
 use failure::{bail, Error, Fail};
 use hex_literal::hex;
+use indoc::indoc;
+use lazy_static::lazy_static;
 use nom::{
     IResult,
     switch, call, length_count, map,
@@ -999,6 +1001,57 @@ impl Display for LabeledItem {
     }
 }
 
+#[test]
+fn test_labeling_formatting() {
+    let r = Labeling(vec![
+        Label {
+            name: String::from("Nil"),
+            item: LabeledItem::Product(Vec::new()),
+        },
+        Label {
+            name: String::from("Cons"),
+            item: LabeledItem::Product(vec![
+                Label {
+                    name: String::from("head"),
+                    item: LabeledItem::Sum(vec![
+                        Label {
+                            name: String::from("a"),
+                            item: LabeledItem::Product(Vec::new()),
+                        },
+                        Label {
+                            name: String::from("b"),
+                            item: LabeledItem::Type,
+                        },
+                    ]),
+                },
+                Label {
+                    name: String::from("tail"),
+                    item: LabeledItem::Type,
+                },
+            ]),
+        },
+        Label {
+            name: String::from("List"),
+            item: LabeledItem::Sum(vec![
+                Label {
+                    name: String::from("Cons"),
+                    item: LabeledItem::Product(Vec::new()),
+                },
+                Label {
+                    name: String::from("Nil"),
+                    item: LabeledItem::Product(Vec::new()),
+                },
+            ]),
+        },
+    ]);
+
+    assert_eq!(format!("{}", r), indoc!("
+        Nil;
+        Cons = {head: (a | b #), tail: #};
+        List = (Cons | Nil);
+    "));
+}
+
 
 fn main() -> Result<(), Error> {
     // let args: Vec<String> = env::args().collect();
@@ -1164,9 +1217,10 @@ fn main() -> Result<(), Error> {
     };
 
 
-    dbg!(&defs);
-    dbg!(defs.normalize());
-    dbg!(defs);
+
+    // Nil;
+    // Cons = {head: (nah | bool (yes | no) | val _ | struct {val: _}), tail: List};
+    // List = (Cons | Nil);
 
 
     /*
