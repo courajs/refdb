@@ -9,7 +9,7 @@ use std::{
 
 use failure::{bail, Error, Fail};
 use hex_literal::hex;
-use indoc::indoc;
+use indoc::indoc as dedent;
 use lazy_static::lazy_static;
 use nom::{
     IResult,
@@ -1045,10 +1045,105 @@ fn test_labeling_formatting() {
         },
     ]);
 
-    assert_eq!(format!("{}", r), indoc!("
+    assert_eq!(format!("{}", r), dedent!("
         Nil;
         Cons = {head: (a | b #), tail: #};
         List = (Cons | Nil);
+    "));
+}
+
+impl RADT {
+    fn print_with_labeling(&self, l: &Labeling) -> Result<String, MonsterError> {
+        Ok(String::new())
+        /*
+        let labels = l.0;
+        if self.items.len() !== labels.len() {
+            return MonsterError::LabellingNumItemMismatch;
+        }
+        let mut result = String::new();
+        for i in 0..self.items.len() {
+            let item = &self.items[i];
+            let label = &labels[i];
+            match item {
+                RADTItem::ExternalType(t) => {
+                    match label.item {
+                        LabelItem::Product(_) | LabelItem::Sum(_) => return MonsterError::LabellingKindMismatch,
+                        LabelItem::Type => 
+                    }
+                    writeln!(result, "{} = {};", label.name
+                },
+                CycleRef(idx) => {
+                }
+            }
+
+        }
+        */
+    }
+}
+
+#[test]
+fn test_print_type_labeling() {
+    let t = RADT {
+        uniqueness: [0; 16],
+        items: vec![
+            // nil
+            RADTItem::Product(Vec::new()),
+            // cons
+            RADTItem::Product(vec![
+                RADTItem::ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}),
+                RADTItem::ExternalType(TypeRef {definition: RADT_TYPE_HASH, item: 0}),
+                RADTItem::ExternalType(TypeRef {definition: Hash([0;32]), item: 0}),
+                RADTItem::CycleRef(2),
+            ]),
+            // list
+            RADTItem::Sum(vec![
+                  RADTItem::CycleRef(0),
+                  RADTItem::CycleRef(1),
+            ]),
+        ],
+    };
+
+    let l = Labeling(vec![
+        Label {
+            name: String::from("Nil"),
+            item: LabeledItem::Product(Vec::new()),
+        },
+        Label {
+            name: String::from("Cons"),
+            item: LabeledItem::Product(vec![
+                Label {
+                    name: String::from("head1"),
+                    item: LabeledItem::Type,
+                }, Label {
+                    name: String::from("head2"),
+                    item: LabeledItem::Type,
+                }, Label {
+                    name: String::from("head3"),
+                    item: LabeledItem::Type,
+                }, Label {
+                    name: String::from("tail"),
+                    item: LabeledItem::Type,
+                },
+            ]),
+        },
+        Label {
+            name: String::from("BlobList"),
+            item: LabeledItem::Sum(vec![
+                Label {
+                    name: String::from("nil"),
+                    item: LabeledItem::Type,
+                }, Label {
+                    name: String::from("cons"),
+                    item: LabeledItem::Type,
+                },
+            ]),
+        },
+    ]);
+
+    assert_eq!(t.print_with_labeling(&l).unwrap(), dedent!("
+        Nil;
+        Cons = {head1: <blobref>, head2: <type>, head3: #00000000:0, tail: List};
+        List = (cons Cons | nil Nil);
     "));
 }
 
