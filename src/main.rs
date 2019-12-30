@@ -458,7 +458,7 @@ impl Decodable for RADT {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RADTItem {
     // Reference to a separate RADT - the hash and cycle index.
-    ExternalType(Hash, usize),
+    ExternalType(TypeRef),
     Sum(Vec<RADTItem>),
     Product(Vec<RADTItem>),
     CycleRef(usize),
@@ -515,7 +515,7 @@ pub fn inner_validate_radt_instance_bytes<'a, 'b>(
     bytes: &'b [u8],
 ) -> Result<(RADTValue, &'b [u8]), MonsterError> {
     match t {
-        RADTItem::ExternalType(_,_) => {
+        RADTItem::ExternalType(_) => {
             Ok((RADTValue::Hash(parse_hash(bytes)?), &bytes[32..]))
         }
         RADTItem::Sum(variants) => {
@@ -581,7 +581,7 @@ fn inner_validate_radt_instance(
     value: &RADTValue,
 ) -> Result<Vec<ExpectedTyping>, MonsterError> {
     match current_item {
-        RADTItem::ExternalType(def, idx) => match value {
+        RADTItem::ExternalType(TypeRef {definition: def, item: idx}) => match value {
             RADTValue::Sum { .. } => Err(MonsterError::Mismatch("hash", "sum")),
             RADTValue::Product(_) => Err(MonsterError::Mismatch(
                 "hash", "product",
@@ -652,7 +652,7 @@ fn test_validate() {
     let list = RADTItem::Sum(vec![RADTItem::CycleRef(1), RADTItem::CycleRef(2)]);
     let nil = RADTItem::Product(Vec::new());
     let cons = RADTItem::Product(vec![
-        RADTItem::ExternalType(BLOB_TYPE_HASH, 12),
+        RADTItem::ExternalType(TypeRef {definition:BLOB_TYPE_HASH, item:12}),
         RADTItem::CycleRef(0),
     ]);
     let blob_list = RADT {
@@ -694,7 +694,7 @@ fn radt_decode_external(bytes: &[u8]) -> IResult<&[u8], RADTItem> {
                 usize::from_be_bytes(b.try_into().unwrap())
             }),
         )),
-        |(h, idx)| RADTItem::ExternalType(h, idx),
+        |(h, idx)| RADTItem::ExternalType(TypeRef { definition: h, item: idx}),
     )(bytes)
 }
 fn radt_decode_sum(bytes: &[u8]) -> IResult<&[u8], RADTItem> {
@@ -739,7 +739,7 @@ fn test_radt_recode() {
         items: vec![
             RADTItem::Product(vec![]),
             RADTItem::Product(vec![
-                RADTItem::ExternalType(BLOB_TYPE_HASH, 0),
+                RADTItem::ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}),
                 RADTItem::CycleRef(0),
             ]),
         ],
@@ -793,18 +793,18 @@ fn test_normalize() {
         uniqueness: [0; 16],
         items: vec![
             CycleRef(0),
-            Product(vec![ExternalType(BLOB_TYPE_HASH, 0), CycleRef(2)]),
-            Product(vec![CycleRef(0), ExternalType(BLOB_TYPE_HASH, 0)]),
+            Product(vec![ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}), CycleRef(2)]),
+            Product(vec![CycleRef(0), ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0})]),
             Product(vec![CycleRef(1), CycleRef(2)]),
         ],
     };
     let expected = RADT {
         uniqueness: [0; 16],
         items: vec![
-            Product(vec![CycleRef(1), ExternalType(BLOB_TYPE_HASH, 0)]),
+            Product(vec![CycleRef(1), ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0})]),
             CycleRef(1),
             Product(vec![CycleRef(3), CycleRef(0)]),
-            Product(vec![ExternalType(BLOB_TYPE_HASH, 0), CycleRef(0)]),
+            Product(vec![ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}), CycleRef(0)]),
         ],
     };
 
@@ -848,7 +848,7 @@ fn test_transpose() {
 impl Serializable for RADTItem {
     fn bytes_into(&self, result: &mut Vec<u8>) {
         match self {
-            RADTItem::ExternalType(h, idx) => {
+            RADTItem::ExternalType(TypeRef {definition: h, item: idx}) => {
                 result.push(0);
                 result.extend_from_slice(&h.0[..]);
                 result.extend_from_slice(&idx.to_be_bytes());
@@ -885,7 +885,7 @@ impl RADTItem {
 
     fn zero_bytes_into(&self, result: &mut Vec<u8>) {
         match self {
-            RADTItem::ExternalType(h, idx) => {
+            RADTItem::ExternalType(TypeRef {definition: h, item: idx}) => {
                 result.push(0);
                 result.extend_from_slice(&h.0[..]);
                 result.extend_from_slice(&idx.to_be_bytes());
@@ -915,7 +915,7 @@ impl RADTItem {
 
     fn update_refs(&mut self, map: &[usize]) {
         match self {
-            RADTItem::ExternalType(_, _) => {}
+            RADTItem::ExternalType(_) => {}
             RADTItem::CycleRef(n) => {
                 *n = map[*n];
             }
@@ -1098,8 +1098,8 @@ fn main() -> Result<(), Error> {
     let double_ref_type = RADT {
         uniqueness: uniq,
         items: vec![RADTItem::Product(vec![
-            RADTItem::ExternalType(BLOB_TYPE_HASH, 0),
-            RADTItem::ExternalType(BLOB_TYPE_HASH, 0),
+            RADTItem::ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}),
+            RADTItem::ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}),
         ])],
     };
 
@@ -1141,7 +1141,7 @@ fn main() -> Result<(), Error> {
     let utf8string = RADT {
         uniqueness: hex!("cafebabe ba5eba11 b01dface ca11ab1e"),
         items: vec![
-            RADTItem::ExternalType(BLOB_TYPE_HASH, 0),
+            RADTItem::ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}),
         ],
     };
     let utf8typedef = Typing {
@@ -1171,7 +1171,7 @@ fn main() -> Result<(), Error> {
             // 1: single label
             RADTItem::Product(vec![
                 // text label
-                RADTItem::ExternalType(utf8hash, 0),
+                RADTItem::ExternalType(TypeRef {definition: utf8hash, item: 0}),
                 // item it's labeling. Either a deeper labeling, or nil when
                 // the type bottoms out on an ExternalType
                 RADTItem::CycleRef(6),
