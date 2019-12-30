@@ -452,6 +452,15 @@ impl Decodable for RADT {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RADTItem {
+    // Reference to a separate RADT - the hash and cycle index.
+    ExternalType(Hash, usize),
+    Sum(Vec<RADTItem>),
+    Product(Vec<RADTItem>),
+    CycleRef(usize),
+}
+
 #[derive(Debug)]
 pub enum RADTValue {
     Hash(Hash),
@@ -673,14 +682,6 @@ fn test_validate() {
     );
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RADTItem {
-    // Reference to a separate RADT - the hash and cycle index.
-    ExternalType(Hash, usize),
-    Sum(Vec<RADTItem>),
-    Product(Vec<RADTItem>),
-    CycleRef(usize),
-}
 
 fn radt_decode_external(bytes: &[u8]) -> IResult<&[u8], RADTItem> {
     map(
@@ -747,7 +748,7 @@ fn test_radt_recode() {
 }
 
 impl RADT {
-    fn normalize(&mut self) {
+    fn normalize(&mut self) -> Vec<usize> {
         // theoretically there should be a much better impl with no clones and simple swaps
         // but that is for another day
         let len = self.items.len();
@@ -766,6 +767,8 @@ impl RADT {
         for item in self.items.iter_mut() {
             item.update_refs(&sort_mapping);
         }
+
+        sort_mapping
     }
 }
 
@@ -1011,6 +1014,93 @@ fn main() -> Result<(), Error> {
     db.put(&instance)?;
     db.put(&typing)?;
 
+
+    let utf8string = RADT {
+        uniqueness: hex!("cafebabe ba5eba11 b01dface ca11ab1e"),
+        items: vec![
+            RADTItem::ExternalType(BLOB_TYPE_HASH, 0),
+        ],
+    };
+    let utf8typedef = Typing {
+        kind: TypeRef {
+            definition: RADT_TYPE_HASH,
+            item: 0,
+        },
+        data: utf8string.hash(),
+    };
+    
+    db.put(&utf8string)?;
+    db.put(&utf8typedef)?;
+
+    let utf8hash = utf8typedef.hash();
+    let utf8 = TypeRef {
+        definition: utf8hash,
+        item: 0
+    };
+
+
+    let mut defs = RADT {
+        uniqueness: [0; 16],
+        items: vec![
+            // 0: nil
+            RADTItem::Product(Vec::new()),
+
+            // 1: single label
+            RADTItem::Product(vec![
+                // text label
+                RADTItem::ExternalType(utf8hash, 0),
+                // item it's labeling. Either a deeper labeling, or nil when
+                // the type bottoms out on an ExternalType
+                RADTItem::CycleRef(6),
+            ]),
+
+            // 2: label list cons
+            RADTItem::Product(vec![
+                RADTItem::CycleRef(1),
+                RADTItem::CycleRef(3),
+            ]),
+
+            // 3: label list
+            RADTItem::Sum(vec![
+                RADTItem::CycleRef(0),
+                RADTItem::CycleRef(2),
+            ]),
+
+            // 4: product field labels
+            RADTItem::CycleRef(3),
+            // 5: variant names
+            RADTItem::CycleRef(3),
+
+            // 6: Single type labeling - product, sum, or nil if it refers to an instance of another
+            // type
+            RADTItem::Sum(vec![
+                RADTItem::CycleRef(4),
+                RADTItem::CycleRef(5),
+                RADTItem::CycleRef(0),
+            ]),
+
+            // 7: item labelings cons
+            RADTItem::Product(vec![
+                RADTItem::CycleRef(6),
+                RADTItem::CycleRef(8),
+            ]),
+
+            // 8: item labels
+            RADTItem::Sum(vec![
+                RADTItem::CycleRef(0),
+                RADTItem::CycleRef(7),
+            ]),
+        ],
+    };
+
+
+    dbg!(&defs);
+    dbg!(defs.normalize());
+    dbg!(defs);
+
+
+    /*
+
     let (typeref, val) = match db.get(typing.hash())? {
         Item::Value(t, v) => (t, v),
         _ => bail!("nah"),
@@ -1018,6 +1108,7 @@ fn main() -> Result<(), Error> {
 
     dbg!(typeref);
     dbg!(val);
+    */
 
     Ok(())
 }
