@@ -3,6 +3,7 @@
 use std::{
     convert::{TryInto},
     fmt,
+    fmt::Display,
     path::Path,
 };
 
@@ -929,6 +930,75 @@ impl RADTItem {
         }
     }
 }
+
+pub struct Labeling(Vec<Label>);
+pub struct Label {
+    name: String,
+    item: LabeledItem,
+}
+pub enum LabeledItem {
+    Product(Vec<Label>),
+    Sum(Vec<Label>),
+    Type,
+}
+
+impl Display for Labeling {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for label in self.0.iter() {
+            if let LabeledItem::Product(ref v) = label.item {
+                if v.len() == 0 {
+                    writeln!(f, "{};", label.name)?;
+                    continue;
+                }
+            }
+            writeln!(f, "{} = {};", label.name, label.item)?;
+        }
+        Ok(())
+    }
+}
+
+impl Display for LabeledItem {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LabeledItem::Type => write!(f, "#"),
+            LabeledItem::Sum(ref vars) => {
+                let mut first = true;
+                write!(f, "(")?;
+                for label in vars.iter() {
+                    if first  {
+                        first = false;
+                    } else {
+                        write!(f, " | ")?;
+                    }
+                    if let LabeledItem::Product(ref v) = label.item {
+                        if v.len() == 0 {
+                            write!(f, "{}", label.name)?;
+                        } else {
+                            write!(f, "{} {}", label.name, label.item)?;
+                        }
+                    } else {
+                        write!(f, "{} {}", label.name, label.item)?;
+                    }
+                }
+                write!(f, ")")
+            },
+            LabeledItem::Product(ref fields) => {
+                let mut first = true;
+                write!(f, "{{")?;
+                for label in fields.iter() {
+                    if first {
+                        first = false;
+                    } else {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", label.name, label.item)?;
+                }
+                write!(f, "}}")
+            }
+        }
+    }
+}
+
 
 fn main() -> Result<(), Error> {
     // let args: Vec<String> = env::args().collect();
