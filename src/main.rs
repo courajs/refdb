@@ -221,6 +221,17 @@ pub const RADT_TYPE_HASH: Hash = Hash(hex!(
     "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001"
 ));
 
+pub struct TypeSpec<'a> {
+    definition: &'a RADT,
+    item: usize,
+}
+
+impl TypeSpec<'_> {
+    fn item(&self) -> &RADTItem {
+        &self.definition.items[self.item]
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct TypeRef {
     definition: Hash,
@@ -1215,6 +1226,111 @@ fn print_item_with_labeling(s: &mut String, base_items: &[RADTItem], base_labels
 }
 
 #[test]
+fn test_print_instance_labeling() {
+    let t = RADT {
+        uniqueness: [0; 16],
+        items: vec![
+            // nil
+            RADTItem::Product(Vec::new()),
+            // cons
+            RADTItem::Product(vec![
+                RADTItem::ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}),
+                RADTItem::ExternalType(TypeRef {definition: RADT_TYPE_HASH, item: 0}),
+                RADTItem::ExternalType(TypeRef {definition: Hash([1;32]), item: 12}),
+                RADTItem::CycleRef(2),
+            ]),
+            // list
+            RADTItem::Sum(vec![
+                  RADTItem::CycleRef(1),
+                  RADTItem::CycleRef(0),
+            ]),
+        ],
+    };
+
+    let l = Labeling(vec![
+        Label {
+            name: String::from("Nil"),
+            item: LabeledItem::Product(Vec::new()),
+        },
+        Label {
+            name: String::from("Cons"),
+            item: LabeledItem::Product(vec![
+                Label {
+                    name: String::from("head1"),
+                    item: LabeledItem::Type,
+                }, Label {
+                    name: String::from("head2"),
+                    item: LabeledItem::Type,
+                }, Label {
+                    name: String::from("head3"),
+                    item: LabeledItem::Type,
+                }, Label {
+                    name: String::from("tail"),
+                    item: LabeledItem::Type,
+                },
+            ]),
+        },
+        Label {
+            name: String::from("BlobList"),
+            item: LabeledItem::Sum(vec![
+                Label {
+                    name: String::from("cons"),
+                    item: LabeledItem::Type,
+                },
+                Label {
+                    name: String::from("nil"),
+                    item: LabeledItem::Type,
+                },
+            ]),
+        },
+    ]);
+
+    let cafe = Hash(hex!("cafebabe 12345678 12345678 12345678 12345678 12345678 12345678 12345678"));
+    let hash2 = Hash(hex!("10011001 12345678 12345678 12345678 12345678 12345678 12345678 12345678"));
+
+    let v = RADTValue::Sum {
+        kind: 0,
+        value: Box::new(RADTValue::Product(vec![
+            RADTValue::Hash(cafe),
+            RADTValue::Sum {
+                kind: 0,
+                value: Box::new(RADTValue::Product(vec![
+                    RADTValue::Hash(hash2),
+                    RADTValue::Sum {
+                        kind: 1,
+                        value: Box::new(RADTValue::Product(Vec::new())),
+                    },
+                ])),
+            },
+        ])),
+    };
+
+    assert_eq!(
+        print_val_with_labeling(&TypeSpec {definition: &t, item: 2}, &l, &v).unwrap(),
+        dedent!("
+            [BlobList cons {head: #cafebabe, tail: cons {head: #10011001, tail: nil}}]
+        ")
+    );
+}
+
+#[allow(unused_must_use)]
+fn print_val_with_labeling(spec: &TypeSpec, Labeling(labels): &Labeling, value: &RADTValue) -> Result<String, MonsterError> {
+    if spec.definition.items.len() != labels.len() {
+        return Err(MonsterError::LabelingNumItemMismatch)
+    }
+    let mut s = format!("[{} ", labels[spec.item].name);
+    inner_print_val_with_labeling(&mut s, spec.item(), &labels[spec.item].item, value)?;
+    write!(s, "]");
+
+    Ok(s)
+}
+
+#[allow(unused_must_use)]
+fn inner_print_val_with_labeling(w: &mut String, t: &RADTItem, l: &LabeledItem, v: &RADTValue) -> Result<(), MonsterError> {
+    Ok(())
+}
+
+#[test]
 fn test_print_type_labeling() {
     let t = RADT {
         uniqueness: [0; 16],
@@ -1273,7 +1389,6 @@ fn test_print_type_labeling() {
             ]),
         },
     ]);
-    println!("{}", t.print_with_labeling(&l).unwrap());
 
     assert_eq!(t.print_with_labeling(&l).unwrap(), dedent!("
         Nil;
