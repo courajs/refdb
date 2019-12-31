@@ -206,10 +206,10 @@ impl Decodable for Blob {
     }
 }
 
-pub static BLOB_TYPE_HASH: Hash = Hash(hex!(
+pub const BLOB_TYPE_HASH: Hash = Hash(hex!(
     "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"
 ));
-pub static RADT_TYPE_HASH: Hash = Hash(hex!(
+pub const RADT_TYPE_HASH: Hash = Hash(hex!(
     "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001"
 ));
 
@@ -231,6 +231,43 @@ impl Decodable for TypeRef {
             |(definition, item)| TypeRef { definition, item },
         )(bytes)
     }
+}
+
+impl Display for TypeRef {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self.definition {
+            BLOB_TYPE_HASH => write!(f, "<blobref>"),
+            RADT_TYPE_HASH => write!(f, "<type>"),
+            _ => {
+                write!(f, "#")?;
+                for c in &self.definition.0[..4] {
+                    write!(f, "{:x}", c)?;
+                }
+                write!(f, ":{}", self.item)
+            }
+        }
+    }
+}
+
+#[test]
+fn test_typeref_display() {
+    let mut t = TypeRef {
+        definition: BLOB_TYPE_HASH,
+        item: 0,
+    };
+    assert_eq!(t.to_string(), "<blobref>");
+
+    t = TypeRef {
+        definition: RADT_TYPE_HASH,
+        item: 0,
+    };
+    assert_eq!(t.to_string(), "<type>");
+
+    t = TypeRef {
+        definition: Hash(hex!("ba5eba11 cafebabe 00000000 00000000 00000000 00000000 00000000 00000000")),
+        item: 22,
+    };
+    assert_eq!(t.to_string(), "#ba5eba11:22");
 }
 
 impl Serializable for usize {
