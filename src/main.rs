@@ -3,7 +3,7 @@
 use std::{
     convert::{TryInto},
     fmt,
-    fmt::Display,
+    fmt::{Display, Write},
     path::Path,
 };
 
@@ -82,6 +82,14 @@ pub enum MonsterError {
         expected_type: TypeRef,
         actual_type: TypeRef,
     },
+    #[fail(display = "labeling prob 1")]
+    LabelingNumItemMismatch,
+    #[fail(display = "labeling prob 2")]
+    LabelingKindMismatch,
+    #[fail(display = "labeling prob 3")]
+    LabelingSumVariantCountMismatch,
+    #[fail(display = "labeling prob 4")]
+    LabelingProductFieldCountMismatch,
 }
 
 
@@ -241,7 +249,7 @@ impl Display for TypeRef {
             _ => {
                 write!(f, "#")?;
                 for c in &self.definition.0[..4] {
-                    write!(f, "{:x}", c)?;
+                    write!(f, "{:02x}", c)?;
                 }
                 write!(f, ":{}", self.item)
             }
@@ -268,6 +276,12 @@ fn test_typeref_display() {
         item: 22,
     };
     assert_eq!(t.to_string(), "#ba5eba11:22");
+
+    t = TypeRef {
+        definition: Hash(hex!("01010101 cafebabe 00000000 00000000 00000000 00000000 00000000 00000000")),
+        item: 12,
+    };
+    assert_eq!(t.to_string(), "#01010101:12");
 }
 
 impl Serializable for usize {
@@ -1090,12 +1104,13 @@ fn test_labeling_formatting() {
 }
 
 impl RADT {
+    // write! returns a result, because writing to a stream may fail.
+    // But writing to a string won't fail, so don't bother with a bunch of error conversion boilerplate
+    #[allow(unused_must_use)]
     fn print_with_labeling(&self, l: &Labeling) -> Result<String, MonsterError> {
-        Ok(String::new())
-        /*
-        let labels = l.0;
-        if self.items.len() !== labels.len() {
-            return MonsterError::LabellingNumItemMismatch;
+        let labels = &l.0;
+        if self.items.len() != labels.len() {
+            return Err(MonsterError::LabelingNumItemMismatch);
         }
         let mut result = String::new();
         for i in 0..self.items.len() {
@@ -1104,18 +1119,99 @@ impl RADT {
             match item {
                 RADTItem::ExternalType(t) => {
                     match label.item {
-                        LabelItem::Product(_) | LabelItem::Sum(_) => return MonsterError::LabellingKindMismatch,
-                        LabelItem::Type => 
-                    }
-                    writeln!(result, "{} = {};", label.name
+                        LabeledItem::Product(_) | LabeledItem::Sum(_) => return Err(MonsterError::LabelingKindMismatch),
+                        LabeledItem::Type => writeln!(result, "{} = {};", label.name, t),
+                    };
                 },
-                CycleRef(idx) => {
-                }
+                RADTItem::CycleRef(idx) => {
+                    match label.item {
+                        LabeledItem::Product(_) | LabeledItem::Sum(_) => return Err(MonsterError::LabelingKindMismatch),
+                        LabeledItem::Type => writeln!(result, "{} = {};", label.name, labels[*idx].name),
+                    };
+                },
+                RADTItem::Product(ref v) if v.len() == 0 => {
+                    writeln!(result, "{};", label.name);
+                },
+                RADTItem::Sum(_) | RADTItem::Product(_) => {
+                    if let LabeledItem::Type = label.item {
+                        return Err(MonsterError::LabelingKindMismatch);
+                    } else {
+                        write!(result, "{} = ", label.name);
+                        print_item_with_labeling(&mut result, &self.items, &labels, item, &label.item)?;
+                        writeln!(result, ";");
+                    }
+                },
             }
-
         }
-        */
+        Ok(result)
     }
+}
+
+// write! returns a result, because writing to a stream may fail.
+// But writing to a string won't fail, so don't bother with a bunch of error conversion boilerplate
+#[allow(unused_must_use)]
+fn print_item_with_labeling(s: &mut String, base_items: &[RADTItem], base_labels: &[Label], item: &RADTItem, label_item: &LabeledItem) -> Result<(), MonsterError> {
+    match item {
+        RADTItem::ExternalType(t) => {
+            if let LabeledItem::Type = label_item {
+                write!(s, "{}", t);
+            } else {
+                return Err(MonsterError::LabelingKindMismatch);
+            }
+        },
+        RADTItem::CycleRef(idx) => {
+            if let LabeledItem::Type = label_item {
+                write!(s, "{}", base_labels[*idx].name);
+            } else {
+                return Err(MonsterError::LabelingKindMismatch);
+            }
+        },
+        RADTItem::Sum(variants) => {
+            if let LabeledItem::Sum(var_labels) = label_item {
+                if variants.len() != var_labels.len() {
+                    return Err(MonsterError::LabelingSumVariantCountMismatch);
+                }
+
+                write!(s, "(");
+                for i in 0..variants.len() {
+                    if i > 0 {
+                        write!(s, " | ");
+                    }
+                    match var_labels[i].item {
+                        LabeledItem::Product(ref v) if v.len() == 0 => {
+                            write!(s, "{}", var_labels[i].name);
+                        },
+                        _ => {
+                            write!(s, "{} ", var_labels[i].name);
+                            print_item_with_labeling(s, base_items, base_labels, &variants[i], &var_labels[i].item)?;
+                        },
+                    }
+                }
+                write!(s, ")");
+            } else {
+                return Err(MonsterError::LabelingKindMismatch);
+            };
+        },
+        RADTItem::Product(fields) => {
+            if let LabeledItem::Product(field_labels) = label_item {
+                if fields.len() != field_labels.len() {
+                    return Err(MonsterError::LabelingProductFieldCountMismatch);
+                }
+                write!(s, "{{");
+                for i in 0..fields.len() {
+                    if i > 0 {
+                        write!(s, ", ");
+                    }
+                    write!(s, "{}: ", field_labels[i].name);
+                    print_item_with_labeling(s, base_items, base_labels, &fields[i], &field_labels[i].item)?;
+                }
+                write!(s, "}}");
+            } else {
+                return Err(MonsterError::LabelingKindMismatch);
+            }
+        }
+    }
+    Ok(())
 }
 
 #[test]
@@ -1129,13 +1225,13 @@ fn test_print_type_labeling() {
             RADTItem::Product(vec![
                 RADTItem::ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}),
                 RADTItem::ExternalType(TypeRef {definition: RADT_TYPE_HASH, item: 0}),
-                RADTItem::ExternalType(TypeRef {definition: Hash([0;32]), item: 0}),
+                RADTItem::ExternalType(TypeRef {definition: Hash([1;32]), item: 12}),
                 RADTItem::CycleRef(2),
             ]),
             // list
             RADTItem::Sum(vec![
-                  RADTItem::CycleRef(0),
                   RADTItem::CycleRef(1),
+                  RADTItem::CycleRef(0),
             ]),
         ],
     };
@@ -1167,20 +1263,22 @@ fn test_print_type_labeling() {
             name: String::from("BlobList"),
             item: LabeledItem::Sum(vec![
                 Label {
-                    name: String::from("nil"),
-                    item: LabeledItem::Type,
-                }, Label {
                     name: String::from("cons"),
+                    item: LabeledItem::Type,
+                },
+                Label {
+                    name: String::from("nil"),
                     item: LabeledItem::Type,
                 },
             ]),
         },
     ]);
+    println!("{}", t.print_with_labeling(&l).unwrap());
 
     assert_eq!(t.print_with_labeling(&l).unwrap(), dedent!("
         Nil;
-        Cons = {head1: <blobref>, head2: <type>, head3: #00000000:0, tail: List};
-        List = (cons Cons | nil Nil);
+        Cons = {head1: <blobref>, head2: <type>, head3: #01010101:12, tail: BlobList};
+        BlobList = (cons Cons | nil Nil);
     "));
 }
 
