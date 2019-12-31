@@ -90,6 +90,8 @@ pub enum MonsterError {
     LabelingSumVariantCountMismatch,
     #[fail(display = "labeling prob 4")]
     LabelingProductFieldCountMismatch,
+    #[fail(display = "labeling prob 5")]
+    NumFieldMismatch
 }
 
 
@@ -1347,13 +1349,14 @@ fn inner_print_val_with_labeling(w: &mut String, base_items: &[RADTItem], base_l
                 return Err(MonsterError::InvalidSumVariant(items.len(), kind));
             }
             write!(w, "{}", labels[kind].name);
-            match (items[kind], labels[kind].item, value) {
+
+            match (&items[kind], &labels[kind].item, &**value) {
                 (RADTItem::Product(ff), LabeledItem::Product(fff), RADTValue::Product(ffff)) if ff.len() == 0 && fff.len() == 0 && ffff.len() == 0 => {
                     Ok(())
                 },
                 _ => {
                     write!(w, " ");
-                    inner_print_val_with_labeling(w, base_items, base_labels, &items[kind], &labels[kind], value)
+                    inner_print_val_with_labeling(w, base_items, base_labels, &items[kind], &labels[kind].item, value)
                 }
             }
         },
@@ -1363,7 +1366,11 @@ fn inner_print_val_with_labeling(w: &mut String, base_items: &[RADTItem], base_l
             }
             write!(w, "{{");
             for i in 0..fields.len() {
-                inner_print_val_with_labeling(w, base_items, base_labels, &fields[i], &field_labels[i], &field_values[i])?;
+                if i > 0 {
+                    write!(w, ", ");
+                }
+                write!(w, "{}: ", field_labels[i].name);
+                inner_print_val_with_labeling(w, base_items, base_labels, &fields[i], &field_labels[i].item, &field_values[i])?;
             }
             write!(w, "}}");
             Ok(())
