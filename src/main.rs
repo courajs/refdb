@@ -134,6 +134,11 @@ impl fmt::Debug for Hash {
         write!(f, "sha-256:{}", hex::encode(self.0))
     }
 }
+impl Display for Hash {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "#{}", hex::encode(self.0))
+    }
+}
 
 pub trait Storable: Serializable {
     const PREFIX: u8;
@@ -1319,15 +1324,54 @@ fn print_val_with_labeling(spec: &TypeSpec, Labeling(labels): &Labeling, value: 
         return Err(MonsterError::LabelingNumItemMismatch)
     }
     let mut s = format!("[{} ", labels[spec.item].name);
-    inner_print_val_with_labeling(&mut s, spec.item(), &labels[spec.item].item, value)?;
+    inner_print_val_with_labeling(&mut s, &spec.definition.items, labels, spec.item(), &labels[spec.item].item, value)?;
     write!(s, "]");
 
     Ok(s)
 }
 
 #[allow(unused_must_use)]
-fn inner_print_val_with_labeling(w: &mut String, t: &RADTItem, l: &LabeledItem, v: &RADTValue) -> Result<(), MonsterError> {
-    Ok(())
+fn inner_print_val_with_labeling(w: &mut String, base_items: &[RADTItem], base_labels: &[Label], t: &RADTItem, l: &LabeledItem, v: &RADTValue) -> Result<(), MonsterError> {
+    match (t, l, v) {
+        (RADTItem::ExternalType(_), LabeledItem::Type, RADTValue::Hash(h)) => {
+            write!(w, "{}", h);
+            Ok(())
+        },
+        (RADTItem::CycleRef(i), LabeledItem::Type, _) => inner_print_val_with_labeling(w, base_items, base_labels, &base_items[*i], &base_labels[*i].item, v),
+        (RADTItem::Sum(items), LabeledItem::Sum(labels), RADTValue::Sum {kind, value}) => {
+            let kind = *kind as usize;
+            if items.len() != labels.len() {
+                return Err(MonsterError::LabelingSumVariantCountMismatch);
+            }
+            if kind >= items.len() {
+                return Err(MonsterError::InvalidSumVariant(items.len(), kind));
+            }
+            write!(w, "{}", labels[kind].name);
+            match (items[kind], labels[kind].item, value) {
+                (RADTItem::Product(ff), LabeledItem::Product(fff), RADTValue::Product(ffff)) if ff.len() == 0 && fff.len() == 0 && ffff.len() == 0 => {
+                    Ok(())
+                },
+                _ => {
+                    write!(w, " ");
+                    inner_print_val_with_labeling(w, base_items, base_labels, &items[kind], &labels[kind], value)
+                }
+            }
+        },
+        (RADTItem::Product(fields), LabeledItem::Product(field_labels), RADTValue::Product(field_values)) => {
+            if fields.len() != field_labels.len() || fields.len() != field_values.len() {
+                return Err(MonsterError::NumFieldMismatch);
+            }
+            write!(w, "{{");
+            for i in 0..fields.len() {
+                inner_print_val_with_labeling(w, base_items, base_labels, &fields[i], &field_labels[i], &field_values[i])?;
+            }
+            write!(w, "}}");
+            Ok(())
+        },
+        _ => {
+            Err(MonsterError::LabelingKindMismatch)
+        }
+    }
 }
 
 #[test]
