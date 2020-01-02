@@ -138,7 +138,7 @@ impl fmt::Debug for Hash {
 }
 impl Display for Hash {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "#{}", hex::encode(self.0))
+        write!(f, "#{}", hex::encode(&self.0[..4]))
     }
 }
 
@@ -1002,11 +1002,14 @@ impl RADTItem {
     }
 }
 
+#[derive(Debug)]
 pub struct Labeling(Vec<Label>);
+#[derive(Debug)]
 pub struct Label {
     name: String,
     item: LabeledItem,
 }
+#[derive(Debug)]
 pub enum LabeledItem {
     Product(Vec<Label>),
     Sum(Vec<Label>),
@@ -1242,8 +1245,6 @@ fn test_print_instance_labeling() {
             // cons
             RADTItem::Product(vec![
                 RADTItem::ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}),
-                RADTItem::ExternalType(TypeRef {definition: RADT_TYPE_HASH, item: 0}),
-                RADTItem::ExternalType(TypeRef {definition: Hash([1;32]), item: 12}),
                 RADTItem::CycleRef(2),
             ]),
             // list
@@ -1263,13 +1264,7 @@ fn test_print_instance_labeling() {
             name: String::from("Cons"),
             item: LabeledItem::Product(vec![
                 Label {
-                    name: String::from("head1"),
-                    item: LabeledItem::Type,
-                }, Label {
-                    name: String::from("head2"),
-                    item: LabeledItem::Type,
-                }, Label {
-                    name: String::from("head3"),
+                    name: String::from("head"),
                     item: LabeledItem::Type,
                 }, Label {
                     name: String::from("tail"),
@@ -1314,9 +1309,7 @@ fn test_print_instance_labeling() {
 
     assert_eq!(
         print_val_with_labeling(&TypeSpec {definition: &t, item: 2}, &l, &v).unwrap(),
-        dedent!("
-            [BlobList cons {head: #cafebabe, tail: cons {head: #10011001, tail: nil}}]
-        ")
+        "[BlobList cons {head: #cafebabe, tail: cons {head: #10011001, tail: nil}}]"
     );
 }
 
@@ -1350,18 +1343,31 @@ fn inner_print_val_with_labeling(w: &mut String, base_items: &[RADTItem], base_l
             }
             write!(w, "{}", labels[kind].name);
 
-            match (&items[kind], &labels[kind].item, &**value) {
+            let mut newt = &items[kind];
+            let mut lab = &labels[kind].item;
+            let val = &**value;
+
+            while let RADTItem::CycleRef(i) = newt {
+                let i = *i as usize;
+                newt = &base_items[i];
+                lab = &base_labels[i].item;
+            }
+
+            match (newt, lab, &**value) {
                 (RADTItem::Product(ff), LabeledItem::Product(fff), RADTValue::Product(ffff)) if ff.len() == 0 && fff.len() == 0 && ffff.len() == 0 => {
+                    println!("empty");
                     Ok(())
                 },
-                _ => {
+                (a, b, c) => {
                     write!(w, " ");
+                    dbg!(a, b, c);
                     inner_print_val_with_labeling(w, base_items, base_labels, &items[kind], &labels[kind].item, value)
                 }
             }
         },
         (RADTItem::Product(fields), LabeledItem::Product(field_labels), RADTValue::Product(field_values)) => {
             if fields.len() != field_labels.len() || fields.len() != field_values.len() {
+                dbg!((&fields, &field_labels, &field_values));
                 return Err(MonsterError::NumFieldMismatch);
             }
             write!(w, "{{");
@@ -1447,7 +1453,6 @@ fn test_print_type_labeling() {
         BlobList = (cons Cons | nil Nil);
     "));
 }
-
 
 fn main() -> Result<(), Error> {
     // let args: Vec<String> = env::args().collect();
