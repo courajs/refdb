@@ -23,76 +23,86 @@ use rkv::{Manager, Rkv, SingleStore, StoreOptions, Value};
 use sha3::{Digest, Sha3_256};
 
 
+pub mod error {
+    use crate::Hash;
+    use crate::TypeRef;
+    use failure::Fail;
 
-#[derive(Debug, Fail)]
-pub enum MonsterError {
-    #[fail(display = "Expected a {}, found a {}", _0, _1)]
-    Mismatch(&'static str, &'static str),
-    #[fail(
-        display = "Invalid sum variant. There are {} options, but found variant tag {}",
-        _0, _1
-    )]
-    InvalidSumVariant(usize, usize),
-    #[fail(
-        display = "Invalid number of product fields. Expected {}, found {}",
-        _0, _1
-    )]
-    InvalidProductFieldCount(usize, usize),
-    #[fail(
-        display = "Invalid cycle variant. There are {} options, but found reference to item {}",
-        _0, _1
-    )]
-    InvalidCycleRef(usize, usize),
-    #[fail(display = "Reached end of blob while parsing {}", _0)]
-    Incomplete(&'static str),
-    #[fail(
-        display = "Excess data at end of blob. Finished parsing with {} bytes remaining out of {} total",
-        _0, _1
-    )]
-    Excess(usize, usize),
-    #[fail(display = "Error parsing {:?} from store: {:?}", _0, _1)]
-    ParseError(Hash, String),
-    #[fail(display = "RKV store error: {:?}", _0)]
-    RkvError(#[cause] rkv::error::StoreError),
-    #[fail(display = "Non-blob found in rkv store under hash {:?}", _0)]
-    NonBlob(Hash),
-    #[fail(display = "{:?} wasn't found in the store", _0)]
-    NotFound(Hash),
-    #[fail(display = "A type definition didn't point directly to bytes")]
-    BrokenTypedef,
-    #[fail(display = "A typing's type hash doesn't point to a type")]
-    UntypedTyping,
-    #[fail(
-        display = "The typing {:?} couldn't be interpreted as a {:?}:\n{}",
-        hash, target_type, err
-    )]
-    BrokenTyping {
-        hash: Hash,
-        target_type: TypeRef,
-        err: String,
-    },
-    #[fail(display = "found blob instead of typing for sub-field ({:?})", _0)]
-    UntypedReference(Hash),
-    #[fail(
-        display = "prereq {:?} is of wrong type. Expected {:?}, found {:?}",
-        reference, expected_type, actual_type
-    )]
-    MistypedReference {
-        reference: Hash,
-        expected_type: TypeRef,
-        actual_type: TypeRef,
-    },
-    #[fail(display = "labeling prob 1")]
-    LabelingNumItemMismatch,
-    #[fail(display = "labeling prob 2")]
-    LabelingKindMismatch,
-    #[fail(display = "labeling prob 3")]
-    LabelingSumVariantCountMismatch,
-    #[fail(display = "labeling prob 4")]
-    LabelingProductFieldCountMismatch,
-    #[fail(display = "labeling prob 5")]
-    NumFieldMismatch
+    #[derive(Debug, Fail)]
+    pub enum MonsterError {
+        #[fail(display = "Expected a {}, found a {}", _0, _1)]
+        Mismatch(&'static str, &'static str),
+        #[fail(
+            display = "Invalid sum variant. There are {} options, but found variant tag {}",
+            _0, _1
+        )]
+        InvalidSumVariant(usize, usize),
+        #[fail(
+            display = "Invalid number of product fields. Expected {}, found {}",
+            _0, _1
+        )]
+        InvalidProductFieldCount(usize, usize),
+        #[fail(
+            display = "Invalid cycle variant. There are {} options, but found reference to item {}",
+            _0, _1
+        )]
+        InvalidCycleRef(usize, usize),
+        #[fail(display = "Reached end of blob while parsing {}", _0)]
+        Incomplete(&'static str),
+        #[fail(
+            display = "Excess data at end of blob. Finished parsing with {} bytes remaining out of {} total",
+            _0, _1
+        )]
+        Excess(usize, usize),
+        #[fail(display = "Error parsing {:?} from store: {:?}", _0, _1)]
+        ParseError(Hash, String),
+        #[fail(display = "RKV store error: {:?}", _0)]
+        RkvError(#[cause] rkv::error::StoreError),
+        #[fail(display = "Non-blob found in rkv store under hash {:?}", _0)]
+        NonBlob(Hash),
+        #[fail(display = "{:?} wasn't found in the store", _0)]
+        NotFound(Hash),
+        #[fail(display = "A type definition didn't point directly to bytes")]
+        BrokenTypedef,
+        #[fail(display = "A typing's type hash doesn't point to a type")]
+        UntypedTyping,
+        #[fail(
+            display = "The typing {:?} couldn't be interpreted as a {:?}:\n{}",
+            hash, target_type, err
+        )]
+        BrokenTyping {
+            hash: Hash,
+            target_type: TypeRef,
+            err: String,
+        },
+        #[fail(display = "found blob instead of typing for sub-field ({:?})", _0)]
+        UntypedReference(Hash),
+        #[fail(
+            display = "prereq {:?} is of wrong type. Expected {:?}, found {:?}",
+            reference, expected_type, actual_type
+        )]
+        MistypedReference {
+            reference: Hash,
+            expected_type: TypeRef,
+            actual_type: TypeRef,
+        },
+        #[fail(display = "labeling prob 1")]
+        LabelingNumItemMismatch,
+        #[fail(display = "labeling prob 2")]
+        LabelingKindMismatch,
+        #[fail(display = "labeling prob 3")]
+        LabelingSumVariantCountMismatch,
+        #[fail(display = "labeling prob 4")]
+        LabelingProductFieldCountMismatch,
+        #[fail(display = "labeling prob 5")]
+        NumFieldMismatch
+    }
 }
+
+use crate::error::MonsterError;
+
+
+
 
 
 // Basic persistence primitives
@@ -396,16 +406,17 @@ pub fn decode_item(bytes: &[u8]) -> IResult<&[u8], LiteralItem> {
 }
 
 impl<'a> Db<'a> {
-    pub fn put(&self, item: &impl Storable) -> Result<(), MonsterError> {
+    pub fn put(&self, item: &impl Storable) -> Result<Hash, MonsterError> {
         // FIXME - handle errors properly here
+        let hash = item.hash();
         let mut writer = self.env.write().unwrap();
         self.store
-            .put(&mut writer, &item.hash(), &Value::Blob(&item.all_bytes()))
+            .put(&mut writer, &hash, &Value::Blob(&item.all_bytes()))
             .map_err(|e| MonsterError::RkvError(e))?;
 
         writer.commit().map_err(|e| MonsterError::RkvError(e))?;
 
-        Ok(())
+        Ok(hash)
     }
 
     pub fn get_bytes(&self, hash: Hash) -> Result<Vec<u8>, MonsterError> {
