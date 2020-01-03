@@ -1,25 +1,4 @@
-use std::{
-    convert::TryInto,
-    fmt,
-    fmt::{Display, Write},
-    path::Path,
-};
-
-use failure::{bail, Error, Fail};
-use hex_literal::hex;
-use indoc::indoc as dedent;
-use lazy_static::lazy_static;
-use nom::{
-    bytes::complete::take,
-    call,
-    combinator::{all_consuming, map},
-    length_count, map,
-    number::complete::{be_u64, be_u8},
-    sequence::tuple,
-    switch, IResult,
-};
-use rkv::{Manager, Rkv, SingleStore, StoreOptions, Value};
-use sha3::{Digest, Sha3_256};
+use failure::Fail;
 
 use crate::core::Hash;
 use crate::types::TypeRef;

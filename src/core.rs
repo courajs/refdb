@@ -1,27 +1,15 @@
 use std::{
-    convert::TryInto,
     fmt,
-    fmt::{Display, Write},
-    path::Path,
+    fmt::Display,
 };
 
-use failure::{bail, Error, Fail};
-use hex_literal::hex;
-use indoc::indoc as dedent;
-use lazy_static::lazy_static;
 use nom::{
+    IResult,
     bytes::complete::take,
-    call,
-    combinator::{all_consuming, map},
-    length_count, map,
-    number::complete::{be_u64, be_u8},
-    sequence::tuple,
-    switch, IResult,
+    combinator::map,
 };
-use rkv::{Manager, Rkv, SingleStore, StoreOptions, Value};
 use sha3::{Digest, Sha3_256};
 
-use crate::error::MonsterError;
 pub trait Serializable {
     fn bytes_into(&self, v: &mut Vec<u8>);
 

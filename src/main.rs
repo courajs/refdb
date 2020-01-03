@@ -1,27 +1,12 @@
 #![allow(unused_mut, dead_code, unused_variables, unused_imports)]
 
 use std::{
-    convert::TryInto,
-    fmt,
-    fmt::{Display, Write},
     path::Path,
 };
 
-use failure::{bail, Error, Fail};
+use failure::Error;
 use hex_literal::hex;
-use indoc::indoc as dedent;
-use lazy_static::lazy_static;
-use nom::{
-    bytes::complete::take,
-    call,
-    combinator::{all_consuming, map},
-    length_count, map,
-    number::complete::{be_u64, be_u8},
-    sequence::tuple,
-    switch, IResult,
-};
-use rkv::{Manager, Rkv, SingleStore, StoreOptions, Value};
-use sha3::{Digest, Sha3_256};
+use rkv::{Manager, Rkv, SingleStore, StoreOptions};
 
 pub mod core;
 pub mod error;
@@ -30,10 +15,9 @@ pub mod storage;
 pub mod types;
 
 use crate::core::*;
-use crate::error::MonsterError;
-use crate::labels::*;
 use crate::storage::*;
 use crate::types::*;
+use crate::labels::*;
 
 fn main() -> Result<(), Error> {
     // let args: Vec<String> = env::args().collect();
