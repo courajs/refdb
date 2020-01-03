@@ -1,13 +1,6 @@
-use std::{
-    fmt,
-    fmt::Display,
-};
+use std::{fmt, fmt::Display};
 
-use nom::{
-    IResult,
-    bytes::complete::take,
-    combinator::map,
-};
+use nom::{bytes::complete::take, combinator::map, IResult};
 use sha3::{Digest, Sha3_256};
 
 pub trait Serializable {

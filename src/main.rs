@@ -1,8 +1,6 @@
 #![allow(unused_mut, dead_code, unused_variables, unused_imports)]
 
-use std::{
-    path::Path,
-};
+use std::path::Path;
 
 use failure::Error;
 use hex_literal::hex;
@@ -15,9 +13,9 @@ pub mod storage;
 pub mod types;
 
 use crate::core::*;
+use crate::labels::*;
 use crate::storage::*;
 use crate::types::*;
-use crate::labels::*;
 
 fn main() -> Result<(), Error> {
     // let args: Vec<String> = env::args().collect();

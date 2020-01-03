@@ -1,10 +1,5 @@
 use failure::Error;
-use nom::{
-    IResult,
-    call, map, switch,
-    number::complete::be_u8,
-    combinator::all_consuming,
-};
+use nom::{call, combinator::all_consuming, map, number::complete::be_u8, switch, IResult};
 use rkv::Value;
 
 use crate::core::*;

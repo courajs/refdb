@@ -1,8 +1,4 @@
-use std::{
-    convert::TryInto,
-    fmt,
-    fmt::Display,
-};
+use std::{convert::TryInto, fmt, fmt::Display};
 
 use hex_literal::hex;
 use nom::{
