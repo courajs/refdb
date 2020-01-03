@@ -23,11 +23,11 @@ use nom::{
 use rkv::{Manager, Rkv, SingleStore, StoreOptions, Value};
 use sha3::{Digest, Sha3_256};
 
-pub mod error;
 pub mod core;
+pub mod error;
+pub mod labels;
 pub mod storage;
 pub mod types;
-pub mod labels;
 
 use crate::core::*;
 use crate::error::MonsterError;
