@@ -24,9 +24,31 @@ use rkv::{Manager, Rkv, SingleStore, StoreOptions, Value};
 use sha3::{Digest, Sha3_256};
 
 pub mod error {
+use std::{
+    convert::TryInto,
+    fmt,
+    fmt::{Display, Write},
+    path::Path,
+};
+
+use failure::{bail, Error, Fail};
+use hex_literal::hex;
+use indoc::indoc as dedent;
+use lazy_static::lazy_static;
+use nom::{
+    bytes::complete::take,
+    call,
+    combinator::{all_consuming, map},
+    length_count, map,
+    number::complete::{be_u64, be_u8},
+    sequence::tuple,
+    switch, IResult,
+};
+use rkv::{Manager, Rkv, SingleStore, StoreOptions, Value};
+use sha3::{Digest, Sha3_256};
+
     use crate::core::Hash;
     use crate::types::TypeRef;
-    use failure::Fail;
 
     #[derive(Debug, Fail)]
     pub enum MonsterError {
@@ -100,6 +122,30 @@ pub mod error {
 }
 
 pub mod core {
+use std::{
+    convert::TryInto,
+    fmt,
+    fmt::{Display, Write},
+    path::Path,
+};
+
+use failure::{bail, Error, Fail};
+use hex_literal::hex;
+use indoc::indoc as dedent;
+use lazy_static::lazy_static;
+use nom::{
+    bytes::complete::take,
+    call,
+    combinator::{all_consuming, map},
+    length_count, map,
+    number::complete::{be_u64, be_u8},
+    sequence::tuple,
+    switch, IResult,
+};
+use rkv::{Manager, Rkv, SingleStore, StoreOptions, Value};
+use sha3::{Digest, Sha3_256};
+
+
     use crate::error::MonsterError;
     pub trait Serializable {
         fn bytes_into(&self, v: &mut Vec<u8>);
@@ -208,6 +254,29 @@ pub mod core {
 }
 
 pub mod storage {
+use std::{
+    convert::TryInto,
+    fmt,
+    fmt::{Display, Write},
+    path::Path,
+};
+
+use failure::{bail, Error, Fail};
+use hex_literal::hex;
+use indoc::indoc as dedent;
+use lazy_static::lazy_static;
+use nom::{
+    bytes::complete::take,
+    call,
+    combinator::{all_consuming, map},
+    length_count, map,
+    number::complete::{be_u64, be_u8},
+    sequence::tuple,
+    switch, IResult,
+};
+use rkv::{Manager, Rkv, SingleStore, StoreOptions, Value};
+use sha3::{Digest, Sha3_256};
+
     use crate::core::*;
     use crate::error::MonsterError;
     use crate::types::*;
@@ -231,7 +300,7 @@ pub mod storage {
         }
 
         fn hash(&self) -> Hash {
-            Hash::of(self.all_bytes())
+            Hash::of(&self.all_bytes())
         }
     }
 
@@ -374,6 +443,30 @@ pub mod storage {
 }
 
 pub mod types {
+use std::{
+    convert::TryInto,
+    fmt,
+    fmt::{Display, Write},
+    path::Path,
+};
+
+use failure::{bail, Error, Fail};
+use hex_literal::hex;
+use indoc::indoc as dedent;
+use lazy_static::lazy_static;
+use nom::{
+    bytes::complete::take,
+    call,
+    combinator::{all_consuming, map},
+    length_count, map,
+    number::complete::{be_u64, be_u8},
+    sequence::tuple,
+    switch, IResult,
+};
+use rkv::{Manager, Rkv, SingleStore, StoreOptions, Value};
+use sha3::{Digest, Sha3_256};
+
+
     use crate::core::*;
     use crate::error::MonsterError;
 
@@ -385,20 +478,20 @@ pub mod types {
     ));
 
     pub struct TypeSpec<'a> {
-        definition: &'a RADT,
-        item: usize,
+        pub definition: &'a RADT,
+        pub item: usize,
     }
 
     impl TypeSpec<'_> {
-        fn item(&self) -> &RADTItem {
+        pub fn item(&self) -> &RADTItem {
             &self.definition.items[self.item]
         }
     }
 
     #[derive(Debug, PartialEq, Eq, Clone, Copy)]
     pub struct TypeRef {
-        definition: Hash,
-        item: usize,
+        pub definition: Hash,
+        pub item: usize,
     }
     impl Serializable for TypeRef {
         fn bytes_into(&self, v: &mut Vec<u8>) {
@@ -1053,16 +1146,40 @@ pub mod types {
 }
 
 pub mod labels {
+use std::{
+    convert::TryInto,
+    fmt,
+    fmt::{Display, Write},
+    path::Path,
+};
+
+use failure::{bail, Error, Fail};
+use hex_literal::hex;
+use indoc::indoc as dedent;
+use lazy_static::lazy_static;
+use nom::{
+    bytes::complete::take,
+    call,
+    combinator::{all_consuming, map},
+    length_count, map,
+    number::complete::{be_u64, be_u8},
+    sequence::tuple,
+    switch, IResult,
+};
+use rkv::{Manager, Rkv, SingleStore, StoreOptions, Value};
+use sha3::{Digest, Sha3_256};
+
+
     use crate::core::*;
     use crate::error::*;
     use crate::types::*;
 
     #[derive(Debug)]
-    pub struct Labeling(Vec<Label>);
+    pub struct Labeling(pub Vec<Label>);
     #[derive(Debug)]
     pub struct Label {
-        name: String,
-        item: LabeledItem,
+        pub name: String,
+        pub item: LabeledItem,
     }
     #[derive(Debug)]
     pub enum LabeledItem {
