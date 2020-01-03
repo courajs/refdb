@@ -1,7 +1,7 @@
-#![allow(unused_mut,dead_code,unused_variables,unused_imports)]
+#![allow(unused_mut, dead_code, unused_variables, unused_imports)]
 
 use std::{
-    convert::{TryInto},
+    convert::TryInto,
     fmt,
     fmt::{Display, Write},
     path::Path,
@@ -12,20 +12,20 @@ use hex_literal::hex;
 use indoc::indoc as dedent;
 use lazy_static::lazy_static;
 use nom::{
-    IResult,
-    switch, call, length_count, map,
     bytes::complete::take,
+    call,
+    combinator::{all_consuming, map},
+    length_count, map,
     number::complete::{be_u64, be_u8},
     sequence::tuple,
-    combinator::{all_consuming, map},
+    switch, IResult,
 };
 use rkv::{Manager, Rkv, SingleStore, StoreOptions, Value};
 use sha3::{Digest, Sha3_256};
 
-
 pub mod error {
-    use crate::Hash;
-    use crate::TypeRef;
+    use crate::core::Hash;
+    use crate::types::TypeRef;
     use failure::Fail;
 
     #[derive(Debug, Fail)]
@@ -95,15 +95,12 @@ pub mod error {
         #[fail(display = "labeling prob 4")]
         LabelingProductFieldCountMismatch,
         #[fail(display = "labeling prob 5")]
-        NumFieldMismatch
+        NumFieldMismatch,
     }
 }
 
-use crate::error::MonsterError;
-use crate::core::*;
-
-
 pub mod core {
+    use crate::error::MonsterError;
     pub trait Serializable {
         fn bytes_into(&self, v: &mut Vec<u8>);
 
@@ -208,10 +205,13 @@ pub mod core {
             ))
         }
     }
-
 }
 
 pub mod storage {
+    use crate::core::*;
+    use crate::error::MonsterError;
+    use crate::types::*;
+
     impl Storable for RADTValue {
         const PREFIX: u8 = 0;
     }
@@ -242,7 +242,6 @@ pub mod storage {
     impl Storable for Typing {
         const PREFIX: u8 = 1;
     }
-
 
     pub struct Db<'a> {
         pub env: &'a rkv::Rkv,
@@ -330,10 +329,12 @@ pub mod storage {
                                     typing.kind.item,
                                     &instance_bytes[1..],
                                 )
-                                .map_err(|e| MonsterError::BrokenTyping {
-                                    hash,
-                                    target_type: typing.kind,
-                                    err: format!("{}", e),
+                                .map_err(|e| {
+                                    MonsterError::BrokenTyping {
+                                        hash,
+                                        target_type: typing.kind,
+                                        err: format!("{}", e),
+                                    }
                                 })?;
                                 Ok(Item::Value(typing.kind, instance))
                             }
@@ -348,12 +349,13 @@ pub mod storage {
                 let bytes = self.get_bytes(expected.reference)?;
                 match decode_item(&bytes[..]) {
                     Err(e) => {
-                        Err(MonsterError::ParseError(expected.reference, format!("{:?}", e)))?;
+                        Err(MonsterError::ParseError(
+                            expected.reference,
+                            format!("{:?}", e),
+                        ))?;
                     }
                     Ok((_, LiteralItem::Blob(_))) => {
-                        Err(MonsterError::UntypedReference(
-                            expected.reference,
-                        ))?;
+                        Err(MonsterError::UntypedReference(expected.reference))?;
                     }
                     Ok((_, LiteralItem::Typing(typing))) => {
                         if typing.kind != expected.kind {
@@ -369,13 +371,12 @@ pub mod storage {
             Ok(())
         }
     }
-
 }
 
-
-
-
 pub mod types {
+    use crate::core::*;
+    use crate::error::MonsterError;
+
     pub const BLOB_TYPE_HASH: Hash = Hash(hex!(
         "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"
     ));
@@ -492,7 +493,6 @@ pub mod types {
         }
     }
 
-
     // recursive algebraic data type
     // allows cyclical references
     #[derive(Clone, Debug, PartialEq, Eq)]
@@ -564,10 +564,7 @@ pub mod types {
     ) -> Result<RADTValue, MonsterError> {
         let (value, rest) = inner_validate_radt_instance_bytes(&t.items, &t.items[idx], bytes)?;
         if rest.len() > 0 {
-            Err(MonsterError::Excess(
-                rest.len(),
-                bytes.len(),
-            ))
+            Err(MonsterError::Excess(rest.len(), bytes.len()))
         } else {
             Ok(value)
         }
@@ -579,14 +576,10 @@ pub mod types {
         bytes: &'b [u8],
     ) -> Result<(RADTValue, &'b [u8]), MonsterError> {
         match t {
-            RADTItem::ExternalType(_) => {
-                Ok((RADTValue::Hash(parse_hash(bytes)?), &bytes[32..]))
-            }
+            RADTItem::ExternalType(_) => Ok((RADTValue::Hash(parse_hash(bytes)?), &bytes[32..])),
             RADTItem::Sum(variants) => {
                 if bytes.len() == 0 {
-                    return Err(MonsterError::Incomplete(
-                        "a sum variant tag",
-                    ));
+                    return Err(MonsterError::Incomplete("a sum variant tag"));
                 }
                 let variant = bytes[0];
                 if variant as usize >= variants.len() {
@@ -630,10 +623,7 @@ pub mod types {
         value: &RADTValue,
     ) -> Result<Vec<ExpectedTyping>, MonsterError> {
         if index >= t.items.len() {
-            Err(MonsterError::InvalidCycleRef(
-                t.items.len(),
-                index,
-            ))
+            Err(MonsterError::InvalidCycleRef(t.items.len(), index))
         } else {
             inner_validate_radt_instance(&t.items, &t.items[index], value)
         }
@@ -645,11 +635,12 @@ pub mod types {
         value: &RADTValue,
     ) -> Result<Vec<ExpectedTyping>, MonsterError> {
         match current_item {
-            RADTItem::ExternalType(TypeRef {definition: def, item: idx}) => match value {
+            RADTItem::ExternalType(TypeRef {
+                definition: def,
+                item: idx,
+            }) => match value {
                 RADTValue::Sum { .. } => Err(MonsterError::Mismatch("hash", "sum")),
-                RADTValue::Product(_) => Err(MonsterError::Mismatch(
-                    "hash", "product",
-                )),
+                RADTValue::Product(_) => Err(MonsterError::Mismatch("hash", "product")),
                 RADTValue::Hash(val) => Ok(vec![ExpectedTyping {
                     reference: *val,
                     kind: TypeRef {
@@ -660,27 +651,18 @@ pub mod types {
             },
             RADTItem::Sum(subs) => match value {
                 RADTValue::Hash(_) => Err(MonsterError::Mismatch("sum", "hash")),
-                RADTValue::Product(_) => {
-                    Err(MonsterError::Mismatch("sum", "product"))
-                }
+                RADTValue::Product(_) => Err(MonsterError::Mismatch("sum", "product")),
                 RADTValue::Sum { kind, value } => {
                     if (*kind as usize) >= subs.len() {
-                        Err(MonsterError::InvalidSumVariant(
-                            subs.len(),
-                            *kind as usize,
-                        ))
+                        Err(MonsterError::InvalidSumVariant(subs.len(), *kind as usize))
                     } else {
                         inner_validate_radt_instance(base_items, &subs[*kind as usize], value)
                     }
                 }
             },
             RADTItem::Product(subs) => match value {
-                RADTValue::Hash(_) => Err(MonsterError::Mismatch(
-                    "product", "hash",
-                )),
-                RADTValue::Sum { .. } => {
-                    Err(MonsterError::Mismatch("product", "sum"))
-                }
+                RADTValue::Hash(_) => Err(MonsterError::Mismatch("product", "hash")),
+                RADTValue::Sum { .. } => Err(MonsterError::Mismatch("product", "sum")),
                 RADTValue::Product(values) => {
                     if subs.len() != values.len() {
                         Err(MonsterError::InvalidProductFieldCount(
@@ -700,10 +682,7 @@ pub mod types {
             },
             RADTItem::CycleRef(idx) => {
                 if *idx >= base_items.len() {
-                    Err(MonsterError::InvalidCycleRef(
-                        base_items.len(),
-                        *idx,
-                    ))
+                    Err(MonsterError::InvalidCycleRef(base_items.len(), *idx))
                 } else {
                     inner_validate_radt_instance(base_items, &base_items[*idx], value)
                 }
@@ -719,7 +698,12 @@ pub mod types {
                     usize::from_be_bytes(b.try_into().unwrap())
                 }),
             )),
-            |(h, idx)| RADTItem::ExternalType(TypeRef { definition: h, item: idx}),
+            |(h, idx)| {
+                RADTItem::ExternalType(TypeRef {
+                    definition: h,
+                    item: idx,
+                })
+            },
         )(bytes)
     }
     fn radt_decode_sum(bytes: &[u8]) -> IResult<&[u8], RADTItem> {
@@ -783,7 +767,10 @@ pub mod types {
     impl Serializable for RADTItem {
         fn bytes_into(&self, result: &mut Vec<u8>) {
             match self {
-                RADTItem::ExternalType(TypeRef {definition: h, item: idx}) => {
+                RADTItem::ExternalType(TypeRef {
+                    definition: h,
+                    item: idx,
+                }) => {
                     result.push(0);
                     result.extend_from_slice(&h.0[..]);
                     result.extend_from_slice(&idx.to_be_bytes());
@@ -820,7 +807,10 @@ pub mod types {
 
         fn zero_bytes_into(&self, result: &mut Vec<u8>) {
             match self {
-                RADTItem::ExternalType(TypeRef {definition: h, item: idx}) => {
+                RADTItem::ExternalType(TypeRef {
+                    definition: h,
+                    item: idx,
+                }) => {
                     result.push(0);
                     result.extend_from_slice(&h.0[..]);
                     result.extend_from_slice(&idx.to_be_bytes());
@@ -868,11 +858,205 @@ pub mod types {
         }
     }
 
+    #[cfg(test)]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn test_typeref_display() {
+            let mut t = TypeRef {
+                definition: BLOB_TYPE_HASH,
+                item: 0,
+            };
+            assert_eq!(t.to_string(), "<blobref>");
+
+            t = TypeRef {
+                definition: RADT_TYPE_HASH,
+                item: 0,
+            };
+            assert_eq!(t.to_string(), "<type>");
+
+            t = TypeRef {
+                definition: Hash(hex!(
+                    "ba5eba11 cafebabe 00000000 00000000 00000000 00000000 00000000 00000000"
+                )),
+                item: 22,
+            };
+            assert_eq!(t.to_string(), "#ba5eba11:22");
+
+            t = TypeRef {
+                definition: Hash(hex!(
+                    "01010101 cafebabe 00000000 00000000 00000000 00000000 00000000 00000000"
+                )),
+                item: 12,
+            };
+            assert_eq!(t.to_string(), "#01010101:12");
+        }
+
+        #[test]
+        fn test_validate() {
+            let list = RADTItem::Sum(vec![RADTItem::CycleRef(1), RADTItem::CycleRef(2)]);
+            let nil = RADTItem::Product(Vec::new());
+            let cons = RADTItem::Product(vec![
+                RADTItem::ExternalType(TypeRef {
+                    definition: BLOB_TYPE_HASH,
+                    item: 12,
+                }),
+                RADTItem::CycleRef(0),
+            ]);
+            let blob_list = RADT {
+                uniqueness: [0; 16],
+                items: vec![list, nil, cons],
+            };
+
+            let value = RADTValue::Sum {
+                kind: 1,
+                value: Box::new(RADTValue::Product(vec![
+                    RADTValue::Hash(RADT_TYPE_HASH),
+                    RADTValue::Sum {
+                        kind: 0,
+                        value: Box::new(RADTValue::Product(Vec::new())),
+                    },
+                ])),
+            };
+
+            let prereqs = validate_radt_instance(&blob_list, 0, &value).expect("should validate");
+
+            assert_eq!(
+                prereqs,
+                vec![ExpectedTyping {
+                    kind: TypeRef {
+                        definition: BLOB_TYPE_HASH,
+                        item: 12,
+                    },
+                    reference: RADT_TYPE_HASH,
+                }]
+            );
+        }
+
+        #[test]
+        fn test_radt_item_recode() {
+            let item = RADTItem::Product(vec![RADTItem::CycleRef(12), RADTItem::CycleRef(12)]);
+            let bytes = item.bytes();
+            let (empty, item2) = RADTItem::decode(&bytes).expect("hey");
+            assert_eq!(item, item2);
+        }
+
+        #[test]
+        fn test_radt_recode() {
+            let blob_list = RADT {
+                uniqueness: [0; 16],
+                items: vec![
+                    RADTItem::Product(vec![]),
+                    RADTItem::Product(vec![
+                        RADTItem::ExternalType(TypeRef {
+                            definition: BLOB_TYPE_HASH,
+                            item: 0,
+                        }),
+                        RADTItem::CycleRef(0),
+                    ]),
+                ],
+            };
+
+            let bytes = blob_list.bytes();
+            let (_, rehydrated) = RADT::decode(&bytes).expect("should parse the encoded radt");
+            assert_eq!(rehydrated, blob_list);
+        }
+
+        #[test]
+        fn test_normalize() {
+            use RADTItem::*;
+            // dbg!(hash_slice(&CycleRef(0).zero_bytes()));
+            // > sha-256:53d4918ee44c2cb4ce8ba669bee35ff4f39b53e91bd79af80a841f63f8578faa
+            // dbg!(hash_slice(&Product(vec![ExternalType(BLOB_TYPE_HASH, 0), CycleRef(2)]).zero_bytes()));
+            // > sha-256:d785756371cd213bc86a7924489907934c5ff5f5f03568ac5deb457f80d2c196
+            // dbg!(hash_slice(&Product(vec![CycleRef(0), ExternalType(BLOB_TYPE_HASH, 0)]).zero_bytes()));
+            // > sha-256:089f61699620a1897360213f2f96626563bbb49c6c6235b32b9ac0c1f74bec16
+            // dbg!(hash_slice(&Product(vec![CycleRef(1), CycleRef(2)]).zero_bytes()));
+            // > sha-256:b5a18419a727b19bdcd967f99b0de7997da3646dd3afa878e43dd856249ad5db
+            //
+            // 2, 0, 3, 1
+
+            let mut r = RADT {
+                uniqueness: [0; 16],
+                items: vec![
+                    CycleRef(0),
+                    Product(vec![
+                        ExternalType(TypeRef {
+                            definition: BLOB_TYPE_HASH,
+                            item: 0,
+                        }),
+                        CycleRef(2),
+                    ]),
+                    Product(vec![
+                        CycleRef(0),
+                        ExternalType(TypeRef {
+                            definition: BLOB_TYPE_HASH,
+                            item: 0,
+                        }),
+                    ]),
+                    Product(vec![CycleRef(1), CycleRef(2)]),
+                ],
+            };
+            let expected = RADT {
+                uniqueness: [0; 16],
+                items: vec![
+                    Product(vec![
+                        CycleRef(1),
+                        ExternalType(TypeRef {
+                            definition: BLOB_TYPE_HASH,
+                            item: 0,
+                        }),
+                    ]),
+                    CycleRef(1),
+                    Product(vec![CycleRef(3), CycleRef(0)]),
+                    Product(vec![
+                        ExternalType(TypeRef {
+                            definition: BLOB_TYPE_HASH,
+                            item: 0,
+                        }),
+                        CycleRef(0),
+                    ]),
+                ],
+            };
+
+            r.normalize();
+            assert_eq!(r, expected);
+        }
+
+        #[test]
+        fn test_radt_mapping() {
+            let mut r = RADTItem::Product(vec![
+                RADTItem::CycleRef(0),
+                RADTItem::CycleRef(1),
+                RADTItem::CycleRef(2),
+                RADTItem::CycleRef(3),
+            ]);
+
+            let expected = RADTItem::Product(vec![
+                RADTItem::CycleRef(2),
+                RADTItem::CycleRef(1),
+                RADTItem::CycleRef(3),
+                RADTItem::CycleRef(0),
+            ]);
+            r.update_refs(&vec![2, 1, 3, 0]);
+            assert_eq!(r, expected);
+        }
+
+        #[test]
+        fn test_transpose() {
+            let mut v = vec![3, 1, 0, 2];
+            transpose(&mut v);
+            assert_eq!(v, vec![2, 1, 3, 0])
+        }
+    }
 }
 
-
-
 pub mod labels {
+    use crate::core::*;
+    use crate::error::*;
+    use crate::types::*;
+
     #[derive(Debug)]
     pub struct Labeling(Vec<Label>);
     #[derive(Debug)]
@@ -910,7 +1094,7 @@ pub mod labels {
                     let mut first = true;
                     write!(f, "(")?;
                     for label in vars.iter() {
-                        if first  {
+                        if first {
                             first = false;
                         } else {
                             write!(f, " | ")?;
@@ -926,7 +1110,7 @@ pub mod labels {
                         }
                     }
                     write!(f, ")")
-                },
+                }
                 LabeledItem::Product(ref fields) => {
                     let mut first = true;
                     write!(f, "{{")?;
@@ -944,7 +1128,6 @@ pub mod labels {
         }
     }
 
-
     // write! returns a result, because writing to a stream may fail.
     // But writing to a string won't fail, so don't bother with a bunch of error conversion boilerplate
     #[allow(unused_must_use)]
@@ -960,28 +1143,40 @@ pub mod labels {
             match item {
                 RADTItem::ExternalType(t) => {
                     match label.item {
-                        LabeledItem::Product(_) | LabeledItem::Sum(_) => return Err(MonsterError::LabelingKindMismatch),
+                        LabeledItem::Product(_) | LabeledItem::Sum(_) => {
+                            return Err(MonsterError::LabelingKindMismatch)
+                        }
                         LabeledItem::Type => writeln!(result, "{} = {};", label.name, t),
                     };
-                },
+                }
                 RADTItem::CycleRef(idx) => {
                     match label.item {
-                        LabeledItem::Product(_) | LabeledItem::Sum(_) => return Err(MonsterError::LabelingKindMismatch),
-                        LabeledItem::Type => writeln!(result, "{} = {};", label.name, labels[*idx].name),
+                        LabeledItem::Product(_) | LabeledItem::Sum(_) => {
+                            return Err(MonsterError::LabelingKindMismatch)
+                        }
+                        LabeledItem::Type => {
+                            writeln!(result, "{} = {};", label.name, labels[*idx].name)
+                        }
                     };
-                },
+                }
                 RADTItem::Product(ref v) if v.len() == 0 => {
                     writeln!(result, "{};", label.name);
-                },
+                }
                 RADTItem::Sum(_) | RADTItem::Product(_) => {
                     if let LabeledItem::Type = label.item {
                         return Err(MonsterError::LabelingKindMismatch);
                     } else {
                         write!(result, "{} = ", label.name);
-                        print_item_with_labeling(&mut result, &t.items, &labels, item, &label.item)?;
+                        print_item_with_labeling(
+                            &mut result,
+                            &t.items,
+                            &labels,
+                            item,
+                            &label.item,
+                        )?;
                         writeln!(result, ";");
                     }
-                },
+                }
             }
         }
         Ok(result)
@@ -990,7 +1185,13 @@ pub mod labels {
     // write! returns a result, because writing to a stream may fail.
     // But writing to a string won't fail, so don't bother with a bunch of error conversion boilerplate
     #[allow(unused_must_use)]
-    fn print_item_with_labeling(s: &mut String, base_items: &[RADTItem], base_labels: &[Label], item: &RADTItem, label_item: &LabeledItem) -> Result<(), MonsterError> {
+    fn print_item_with_labeling(
+        s: &mut String,
+        base_items: &[RADTItem],
+        base_labels: &[Label],
+        item: &RADTItem,
+        label_item: &LabeledItem,
+    ) -> Result<(), MonsterError> {
         match item {
             RADTItem::ExternalType(t) => {
                 if let LabeledItem::Type = label_item {
@@ -998,14 +1199,14 @@ pub mod labels {
                 } else {
                     return Err(MonsterError::LabelingKindMismatch);
                 }
-            },
+            }
             RADTItem::CycleRef(idx) => {
                 if let LabeledItem::Type = label_item {
                     write!(s, "{}", base_labels[*idx].name);
                 } else {
                     return Err(MonsterError::LabelingKindMismatch);
                 }
-            },
+            }
             RADTItem::Sum(variants) => {
                 if let LabeledItem::Sum(var_labels) = label_item {
                     if variants.len() != var_labels.len() {
@@ -1020,18 +1221,24 @@ pub mod labels {
                         match var_labels[i].item {
                             LabeledItem::Product(ref v) if v.len() == 0 => {
                                 write!(s, "{}", var_labels[i].name);
-                            },
+                            }
                             _ => {
                                 write!(s, "{} ", var_labels[i].name);
-                                print_item_with_labeling(s, base_items, base_labels, &variants[i], &var_labels[i].item)?;
-                            },
+                                print_item_with_labeling(
+                                    s,
+                                    base_items,
+                                    base_labels,
+                                    &variants[i],
+                                    &var_labels[i].item,
+                                )?;
+                            }
                         }
                     }
                     write!(s, ")");
                 } else {
                     return Err(MonsterError::LabelingKindMismatch);
                 };
-            },
+            }
             RADTItem::Product(fields) => {
                 if let LabeledItem::Product(field_labels) = label_item {
                     if fields.len() != field_labels.len() {
@@ -1043,7 +1250,13 @@ pub mod labels {
                             write!(s, ", ");
                         }
                         write!(s, "{}: ", field_labels[i].name);
-                        print_item_with_labeling(s, base_items, base_labels, &fields[i], &field_labels[i].item)?;
+                        print_item_with_labeling(
+                            s,
+                            base_items,
+                            base_labels,
+                            &fields[i],
+                            &field_labels[i].item,
+                        )?;
                     }
                     write!(s, "}}");
                 } else {
@@ -1054,86 +1267,129 @@ pub mod labels {
         Ok(())
     }
 
+    #[allow(unused_must_use)]
+    fn print_val_with_labeling(
+        spec: &TypeSpec,
+        Labeling(labels): &Labeling,
+        value: &RADTValue,
+    ) -> Result<String, MonsterError> {
+        if spec.definition.items.len() != labels.len() {
+            return Err(MonsterError::LabelingNumItemMismatch);
+        }
+        let mut s = format!("[{} ", labels[spec.item].name);
+        inner_print_val_with_labeling(
+            &mut s,
+            &spec.definition.items,
+            labels,
+            spec.item(),
+            &labels[spec.item].item,
+            value,
+        )?;
+        write!(s, "]");
 
-
-#[allow(unused_must_use)]
-fn print_val_with_labeling(spec: &TypeSpec, Labeling(labels): &Labeling, value: &RADTValue) -> Result<String, MonsterError> {
-    if spec.definition.items.len() != labels.len() {
-        return Err(MonsterError::LabelingNumItemMismatch)
+        Ok(s)
     }
-    let mut s = format!("[{} ", labels[spec.item].name);
-    inner_print_val_with_labeling(&mut s, &spec.definition.items, labels, spec.item(), &labels[spec.item].item, value)?;
-    write!(s, "]");
 
-    Ok(s)
-}
-
-#[allow(unused_must_use)]
-fn inner_print_val_with_labeling(w: &mut String, base_items: &[RADTItem], base_labels: &[Label], t: &RADTItem, l: &LabeledItem, v: &RADTValue) -> Result<(), MonsterError> {
-    match (t, l, v) {
-        (RADTItem::ExternalType(_), LabeledItem::Type, RADTValue::Hash(h)) => {
-            write!(w, "{}", h);
-            Ok(())
-        },
-        (RADTItem::CycleRef(i), LabeledItem::Type, _) => inner_print_val_with_labeling(w, base_items, base_labels, &base_items[*i], &base_labels[*i].item, v),
-        (RADTItem::Sum(items), LabeledItem::Sum(labels), RADTValue::Sum {kind, value}) => {
-            let kind = *kind as usize;
-            if items.len() != labels.len() {
-                return Err(MonsterError::LabelingSumVariantCountMismatch);
+    #[allow(unused_must_use)]
+    fn inner_print_val_with_labeling(
+        w: &mut String,
+        base_items: &[RADTItem],
+        base_labels: &[Label],
+        t: &RADTItem,
+        l: &LabeledItem,
+        v: &RADTValue,
+    ) -> Result<(), MonsterError> {
+        match (t, l, v) {
+            (RADTItem::ExternalType(_), LabeledItem::Type, RADTValue::Hash(h)) => {
+                write!(w, "{}", h);
+                Ok(())
             }
-            if kind >= items.len() {
-                return Err(MonsterError::InvalidSumVariant(items.len(), kind));
-            }
-            write!(w, "{}", labels[kind].name);
+            (RADTItem::CycleRef(i), LabeledItem::Type, _) => inner_print_val_with_labeling(
+                w,
+                base_items,
+                base_labels,
+                &base_items[*i],
+                &base_labels[*i].item,
+                v,
+            ),
+            (RADTItem::Sum(items), LabeledItem::Sum(labels), RADTValue::Sum { kind, value }) => {
+                let kind = *kind as usize;
+                if items.len() != labels.len() {
+                    return Err(MonsterError::LabelingSumVariantCountMismatch);
+                }
+                if kind >= items.len() {
+                    return Err(MonsterError::InvalidSumVariant(items.len(), kind));
+                }
+                write!(w, "{}", labels[kind].name);
 
-            let mut newt = &items[kind];
-            let mut lab = &labels[kind].item;
-            let val = &**value;
+                let mut newt = &items[kind];
+                let mut lab = &labels[kind].item;
+                let val = &**value;
 
-            while let RADTItem::CycleRef(i) = newt {
-                let i = *i as usize;
-                newt = &base_items[i];
-                lab = &base_labels[i].item;
-            }
+                while let RADTItem::CycleRef(i) = newt {
+                    let i = *i as usize;
+                    newt = &base_items[i];
+                    lab = &base_labels[i].item;
+                }
 
-            match (newt, lab, &**value) {
-                (RADTItem::Product(ff), LabeledItem::Product(fff), RADTValue::Product(ffff)) if ff.len() == 0 && fff.len() == 0 && ffff.len() == 0 => {
-                    println!("empty");
-                    Ok(())
-                },
-                (a, b, c) => {
-                    write!(w, " ");
-                    dbg!(a, b, c);
-                    inner_print_val_with_labeling(w, base_items, base_labels, &items[kind], &labels[kind].item, value)
+                match (newt, lab, &**value) {
+                    (
+                        RADTItem::Product(ff),
+                        LabeledItem::Product(fff),
+                        RADTValue::Product(ffff),
+                    ) if ff.len() == 0 && fff.len() == 0 && ffff.len() == 0 => {
+                        println!("empty");
+                        Ok(())
+                    }
+                    (a, b, c) => {
+                        write!(w, " ");
+                        dbg!(a, b, c);
+                        inner_print_val_with_labeling(
+                            w,
+                            base_items,
+                            base_labels,
+                            &items[kind],
+                            &labels[kind].item,
+                            value,
+                        )
+                    }
                 }
             }
-        },
-        (RADTItem::Product(fields), LabeledItem::Product(field_labels), RADTValue::Product(field_values)) => {
-            if fields.len() != field_labels.len() || fields.len() != field_values.len() {
-                dbg!((&fields, &field_labels, &field_values));
-                return Err(MonsterError::NumFieldMismatch);
-            }
-            write!(w, "{{");
-            for i in 0..fields.len() {
-                if i > 0 {
-                    write!(w, ", ");
+            (
+                RADTItem::Product(fields),
+                LabeledItem::Product(field_labels),
+                RADTValue::Product(field_values),
+            ) => {
+                if fields.len() != field_labels.len() || fields.len() != field_values.len() {
+                    dbg!((&fields, &field_labels, &field_values));
+                    return Err(MonsterError::NumFieldMismatch);
                 }
-                write!(w, "{}: ", field_labels[i].name);
-                inner_print_val_with_labeling(w, base_items, base_labels, &fields[i], &field_labels[i].item, &field_values[i])?;
+                write!(w, "{{");
+                for i in 0..fields.len() {
+                    if i > 0 {
+                        write!(w, ", ");
+                    }
+                    write!(w, "{}: ", field_labels[i].name);
+                    inner_print_val_with_labeling(
+                        w,
+                        base_items,
+                        base_labels,
+                        &fields[i],
+                        &field_labels[i].item,
+                        &field_values[i],
+                    )?;
+                }
+                write!(w, "}}");
+                Ok(())
             }
-            write!(w, "}}");
-            Ok(())
-        },
-        _ => {
-            Err(MonsterError::LabelingKindMismatch)
+            _ => Err(MonsterError::LabelingKindMismatch),
         }
     }
-}
-
-
 
     #[cfg(test)]
     mod tests {
+        use super::*;
+
         #[test]
         fn test_labeling_formatting() {
             let r = Labeling(vec![
@@ -1178,161 +1434,197 @@ fn inner_print_val_with_labeling(w: &mut String, base_items: &[RADTItem], base_l
                 },
             ]);
 
-            assert_eq!(format!("{}", r), dedent!("
+            assert_eq!(
+                format!("{}", r),
+                dedent!(
+                    "
                 Nil;
                 Cons = {head: (a | b #), tail: #};
                 List = (Cons | Nil);
-            "));
+            "
+                )
+            );
         }
 
-#[test]
-fn test_print_instance_labeling() {
-    let t = RADT {
-        uniqueness: [0; 16],
-        items: vec![
-            // nil
-            RADTItem::Product(Vec::new()),
-            // cons
-            RADTItem::Product(vec![
-                RADTItem::ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}),
-                RADTItem::CycleRef(2),
-            ]),
-            // list
-            RADTItem::Sum(vec![
-                  RADTItem::CycleRef(1),
-                  RADTItem::CycleRef(0),
-            ]),
-        ],
-    };
+        #[test]
+        fn test_print_instance_labeling() {
+            let t = RADT {
+                uniqueness: [0; 16],
+                items: vec![
+                    // nil
+                    RADTItem::Product(Vec::new()),
+                    // cons
+                    RADTItem::Product(vec![
+                        RADTItem::ExternalType(TypeRef {
+                            definition: BLOB_TYPE_HASH,
+                            item: 0,
+                        }),
+                        RADTItem::CycleRef(2),
+                    ]),
+                    // list
+                    RADTItem::Sum(vec![RADTItem::CycleRef(1), RADTItem::CycleRef(0)]),
+                ],
+            };
 
-    let l = Labeling(vec![
-        Label {
-            name: String::from("Nil"),
-            item: LabeledItem::Product(Vec::new()),
-        },
-        Label {
-            name: String::from("Cons"),
-            item: LabeledItem::Product(vec![
+            let l = Labeling(vec![
                 Label {
-                    name: String::from("head"),
-                    item: LabeledItem::Type,
-                }, Label {
-                    name: String::from("tail"),
-                    item: LabeledItem::Type,
-                },
-            ]),
-        },
-        Label {
-            name: String::from("BlobList"),
-            item: LabeledItem::Sum(vec![
-                Label {
-                    name: String::from("cons"),
-                    item: LabeledItem::Type,
+                    name: String::from("Nil"),
+                    item: LabeledItem::Product(Vec::new()),
                 },
                 Label {
-                    name: String::from("nil"),
-                    item: LabeledItem::Type,
+                    name: String::from("Cons"),
+                    item: LabeledItem::Product(vec![
+                        Label {
+                            name: String::from("head"),
+                            item: LabeledItem::Type,
+                        },
+                        Label {
+                            name: String::from("tail"),
+                            item: LabeledItem::Type,
+                        },
+                    ]),
                 },
-            ]),
-        },
-    ]);
+                Label {
+                    name: String::from("BlobList"),
+                    item: LabeledItem::Sum(vec![
+                        Label {
+                            name: String::from("cons"),
+                            item: LabeledItem::Type,
+                        },
+                        Label {
+                            name: String::from("nil"),
+                            item: LabeledItem::Type,
+                        },
+                    ]),
+                },
+            ]);
 
-    let cafe = Hash(hex!("cafebabe 12345678 12345678 12345678 12345678 12345678 12345678 12345678"));
-    let hash2 = Hash(hex!("10011001 12345678 12345678 12345678 12345678 12345678 12345678 12345678"));
+            let cafe = Hash(hex!(
+                "cafebabe 12345678 12345678 12345678 12345678 12345678 12345678 12345678"
+            ));
+            let hash2 = Hash(hex!(
+                "10011001 12345678 12345678 12345678 12345678 12345678 12345678 12345678"
+            ));
 
-    let v = RADTValue::Sum {
-        kind: 0,
-        value: Box::new(RADTValue::Product(vec![
-            RADTValue::Hash(cafe),
-            RADTValue::Sum {
+            let v = RADTValue::Sum {
                 kind: 0,
                 value: Box::new(RADTValue::Product(vec![
-                    RADTValue::Hash(hash2),
+                    RADTValue::Hash(cafe),
                     RADTValue::Sum {
-                        kind: 1,
-                        value: Box::new(RADTValue::Product(Vec::new())),
+                        kind: 0,
+                        value: Box::new(RADTValue::Product(vec![
+                            RADTValue::Hash(hash2),
+                            RADTValue::Sum {
+                                kind: 1,
+                                value: Box::new(RADTValue::Product(Vec::new())),
+                            },
+                        ])),
                     },
                 ])),
-            },
-        ])),
-    };
+            };
 
-    assert_eq!(
-        print_val_with_labeling(&TypeSpec {definition: &t, item: 2}, &l, &v).unwrap(),
-        "[BlobList cons {head: #cafebabe, tail: cons {head: #10011001, tail: nil}}]"
-    );
-}
+            assert_eq!(
+                print_val_with_labeling(
+                    &TypeSpec {
+                        definition: &t,
+                        item: 2
+                    },
+                    &l,
+                    &v
+                )
+                .unwrap(),
+                "[BlobList cons {head: #cafebabe, tail: cons {head: #10011001, tail: nil}}]"
+            );
+        }
 
-#[test]
-fn test_print_type_labeling() {
-    let t = RADT {
-        uniqueness: [0; 16],
-        items: vec![
-            // nil
-            RADTItem::Product(Vec::new()),
-            // cons
-            RADTItem::Product(vec![
-                RADTItem::ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}),
-                RADTItem::ExternalType(TypeRef {definition: RADT_TYPE_HASH, item: 0}),
-                RADTItem::ExternalType(TypeRef {definition: Hash([1;32]), item: 12}),
-                RADTItem::CycleRef(2),
-            ]),
-            // list
-            RADTItem::Sum(vec![
-                  RADTItem::CycleRef(1),
-                  RADTItem::CycleRef(0),
-            ]),
-        ],
-    };
+        #[test]
+        fn test_print_type_labeling() {
+            let t = RADT {
+                uniqueness: [0; 16],
+                items: vec![
+                    // nil
+                    RADTItem::Product(Vec::new()),
+                    // cons
+                    RADTItem::Product(vec![
+                        RADTItem::ExternalType(TypeRef {
+                            definition: BLOB_TYPE_HASH,
+                            item: 0,
+                        }),
+                        RADTItem::ExternalType(TypeRef {
+                            definition: RADT_TYPE_HASH,
+                            item: 0,
+                        }),
+                        RADTItem::ExternalType(TypeRef {
+                            definition: Hash([1; 32]),
+                            item: 12,
+                        }),
+                        RADTItem::CycleRef(2),
+                    ]),
+                    // list
+                    RADTItem::Sum(vec![RADTItem::CycleRef(1), RADTItem::CycleRef(0)]),
+                ],
+            };
 
-    let l = Labeling(vec![
-        Label {
-            name: String::from("Nil"),
-            item: LabeledItem::Product(Vec::new()),
-        },
-        Label {
-            name: String::from("Cons"),
-            item: LabeledItem::Product(vec![
+            let l = Labeling(vec![
                 Label {
-                    name: String::from("head1"),
-                    item: LabeledItem::Type,
-                }, Label {
-                    name: String::from("head2"),
-                    item: LabeledItem::Type,
-                }, Label {
-                    name: String::from("head3"),
-                    item: LabeledItem::Type,
-                }, Label {
-                    name: String::from("tail"),
-                    item: LabeledItem::Type,
-                },
-            ]),
-        },
-        Label {
-            name: String::from("BlobList"),
-            item: LabeledItem::Sum(vec![
-                Label {
-                    name: String::from("cons"),
-                    item: LabeledItem::Type,
+                    name: String::from("Nil"),
+                    item: LabeledItem::Product(Vec::new()),
                 },
                 Label {
-                    name: String::from("nil"),
-                    item: LabeledItem::Type,
+                    name: String::from("Cons"),
+                    item: LabeledItem::Product(vec![
+                        Label {
+                            name: String::from("head1"),
+                            item: LabeledItem::Type,
+                        },
+                        Label {
+                            name: String::from("head2"),
+                            item: LabeledItem::Type,
+                        },
+                        Label {
+                            name: String::from("head3"),
+                            item: LabeledItem::Type,
+                        },
+                        Label {
+                            name: String::from("tail"),
+                            item: LabeledItem::Type,
+                        },
+                    ]),
                 },
-            ]),
-        },
-    ]);
+                Label {
+                    name: String::from("BlobList"),
+                    item: LabeledItem::Sum(vec![
+                        Label {
+                            name: String::from("cons"),
+                            item: LabeledItem::Type,
+                        },
+                        Label {
+                            name: String::from("nil"),
+                            item: LabeledItem::Type,
+                        },
+                    ]),
+                },
+            ]);
 
-    assert_eq!(print_with_labeling(&t, &l).unwrap(), dedent!("
+            assert_eq!(
+                print_with_labeling(&t, &l).unwrap(),
+                dedent!(
+                    "
         Nil;
         Cons = {head1: <blobref>, head2: <type>, head3: #01010101:12, tail: BlobList};
         BlobList = (cons Cons | nil Nil);
-    "));
-}
+    "
+                )
+            );
+        }
     }
 }
 
-
+use crate::core::*;
+use crate::error::MonsterError;
+use crate::labels::*;
+use crate::storage::*;
+use crate::types::*;
 
 fn main() -> Result<(), Error> {
     // let args: Vec<String> = env::args().collect();
@@ -1379,8 +1671,14 @@ fn main() -> Result<(), Error> {
     let double_ref_type = RADT {
         uniqueness: uniq,
         items: vec![RADTItem::Product(vec![
-            RADTItem::ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}),
-            RADTItem::ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}),
+            RADTItem::ExternalType(TypeRef {
+                definition: BLOB_TYPE_HASH,
+                item: 0,
+            }),
+            RADTItem::ExternalType(TypeRef {
+                definition: BLOB_TYPE_HASH,
+                item: 0,
+            }),
         ])],
     };
 
@@ -1418,12 +1716,12 @@ fn main() -> Result<(), Error> {
     db.put(&instance)?;
     db.put(&typing)?;
 
-
     let utf8string = RADT {
         uniqueness: hex!("cafebabe ba5eba11 b01dface ca11ab1e"),
-        items: vec![
-            RADTItem::ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}),
-        ],
+        items: vec![RADTItem::ExternalType(TypeRef {
+            definition: BLOB_TYPE_HASH,
+            item: 0,
+        })],
     };
     let utf8typedef = Typing {
         kind: TypeRef {
@@ -1432,49 +1730,40 @@ fn main() -> Result<(), Error> {
         },
         data: utf8string.hash(),
     };
-    
+
     db.put(&utf8string)?;
     db.put(&utf8typedef)?;
 
     let utf8hash = utf8typedef.hash();
     let utf8 = TypeRef {
         definition: utf8hash,
-        item: 0
+        item: 0,
     };
-
 
     let mut defs = RADT {
         uniqueness: [0; 16],
         items: vec![
             // 0: nil
             RADTItem::Product(Vec::new()),
-
             // 1: single label
             RADTItem::Product(vec![
                 // text label
-                RADTItem::ExternalType(TypeRef {definition: utf8hash, item: 0}),
+                RADTItem::ExternalType(TypeRef {
+                    definition: utf8hash,
+                    item: 0,
+                }),
                 // item it's labeling. Either a deeper labeling, or nil when
                 // the type bottoms out on an ExternalType
                 RADTItem::CycleRef(6),
             ]),
-
             // 2: label list cons
-            RADTItem::Product(vec![
-                RADTItem::CycleRef(1),
-                RADTItem::CycleRef(3),
-            ]),
-
+            RADTItem::Product(vec![RADTItem::CycleRef(1), RADTItem::CycleRef(3)]),
             // 3: label list
-            RADTItem::Sum(vec![
-                RADTItem::CycleRef(0),
-                RADTItem::CycleRef(2),
-            ]),
-
+            RADTItem::Sum(vec![RADTItem::CycleRef(0), RADTItem::CycleRef(2)]),
             // 4: product field labels
             RADTItem::CycleRef(3),
             // 5: variant names
             RADTItem::CycleRef(3),
-
             // 6: Single type labeling - product, sum, or nil if it refers to an instance of another
             // type
             RADTItem::Sum(vec![
@@ -1482,27 +1771,16 @@ fn main() -> Result<(), Error> {
                 RADTItem::CycleRef(5),
                 RADTItem::CycleRef(0),
             ]),
-
             // 7: item labelings cons
-            RADTItem::Product(vec![
-                RADTItem::CycleRef(6),
-                RADTItem::CycleRef(8),
-            ]),
-
+            RADTItem::Product(vec![RADTItem::CycleRef(6), RADTItem::CycleRef(8)]),
             // 8: item labels
-            RADTItem::Sum(vec![
-                RADTItem::CycleRef(0),
-                RADTItem::CycleRef(7),
-            ]),
+            RADTItem::Sum(vec![RADTItem::CycleRef(0), RADTItem::CycleRef(7)]),
         ],
     };
-
-
 
     // Nil;
     // Cons = {head: (nah | bool (yes | no) | val _ | struct {val: _}), tail: List};
     // List = (Cons | Nil);
-
 
     /*
 
@@ -1516,162 +1794,4 @@ fn main() -> Result<(), Error> {
     */
 
     Ok(())
-}
-
-
-#[test]
-fn test_typeref_display() {
-    let mut t = TypeRef {
-        definition: BLOB_TYPE_HASH,
-        item: 0,
-    };
-    assert_eq!(t.to_string(), "<blobref>");
-
-    t = TypeRef {
-        definition: RADT_TYPE_HASH,
-        item: 0,
-    };
-    assert_eq!(t.to_string(), "<type>");
-
-    t = TypeRef {
-        definition: Hash(hex!("ba5eba11 cafebabe 00000000 00000000 00000000 00000000 00000000 00000000")),
-        item: 22,
-    };
-    assert_eq!(t.to_string(), "#ba5eba11:22");
-
-    t = TypeRef {
-        definition: Hash(hex!("01010101 cafebabe 00000000 00000000 00000000 00000000 00000000 00000000")),
-        item: 12,
-    };
-    assert_eq!(t.to_string(), "#01010101:12");
-}
-
-
-#[test]
-fn test_validate() {
-    let list = RADTItem::Sum(vec![RADTItem::CycleRef(1), RADTItem::CycleRef(2)]);
-    let nil = RADTItem::Product(Vec::new());
-    let cons = RADTItem::Product(vec![
-        RADTItem::ExternalType(TypeRef {definition:BLOB_TYPE_HASH, item:12}),
-        RADTItem::CycleRef(0),
-    ]);
-    let blob_list = RADT {
-        uniqueness: [0; 16],
-        items: vec![list, nil, cons],
-    };
-
-    let value = RADTValue::Sum {
-        kind: 1,
-        value: Box::new(RADTValue::Product(vec![
-            RADTValue::Hash(RADT_TYPE_HASH),
-            RADTValue::Sum {
-                kind: 0,
-                value: Box::new(RADTValue::Product(Vec::new())),
-            },
-        ])),
-    };
-
-    let prereqs = validate_radt_instance(&blob_list, 0, &value).expect("should validate");
-
-    assert_eq!(
-        prereqs,
-        vec![ExpectedTyping {
-            kind: TypeRef {
-                definition: BLOB_TYPE_HASH,
-                item: 12,
-            },
-            reference: RADT_TYPE_HASH,
-        }]
-    );
-}
-
-
-#[test]
-fn test_radt_item_recode() {
-    let item = RADTItem::Product(vec![RADTItem::CycleRef(12), RADTItem::CycleRef(12)]);
-    let bytes = item.bytes();
-    let (empty, item2) = RADTItem::decode(&bytes).expect("hey");
-    assert_eq!(item, item2);
-}
-
-#[test]
-fn test_radt_recode() {
-    let blob_list = RADT {
-        uniqueness: [0; 16],
-        items: vec![
-            RADTItem::Product(vec![]),
-            RADTItem::Product(vec![
-                RADTItem::ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}),
-                RADTItem::CycleRef(0),
-            ]),
-        ],
-    };
-
-    let bytes = blob_list.bytes();
-    let (_, rehydrated) = RADT::decode(&bytes).expect("should parse the encoded radt");
-    assert_eq!(rehydrated, blob_list);
-}
-
-
-#[test]
-fn test_normalize() {
-    use RADTItem::*;
-    // dbg!(hash_slice(&CycleRef(0).zero_bytes()));
-    // > sha-256:53d4918ee44c2cb4ce8ba669bee35ff4f39b53e91bd79af80a841f63f8578faa
-    // dbg!(hash_slice(&Product(vec![ExternalType(BLOB_TYPE_HASH, 0), CycleRef(2)]).zero_bytes()));
-    // > sha-256:d785756371cd213bc86a7924489907934c5ff5f5f03568ac5deb457f80d2c196
-    // dbg!(hash_slice(&Product(vec![CycleRef(0), ExternalType(BLOB_TYPE_HASH, 0)]).zero_bytes()));
-    // > sha-256:089f61699620a1897360213f2f96626563bbb49c6c6235b32b9ac0c1f74bec16
-    // dbg!(hash_slice(&Product(vec![CycleRef(1), CycleRef(2)]).zero_bytes()));
-    // > sha-256:b5a18419a727b19bdcd967f99b0de7997da3646dd3afa878e43dd856249ad5db
-    //
-    // 2, 0, 3, 1
-
-    let mut r = RADT {
-        uniqueness: [0; 16],
-        items: vec![
-            CycleRef(0),
-            Product(vec![ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}), CycleRef(2)]),
-            Product(vec![CycleRef(0), ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0})]),
-            Product(vec![CycleRef(1), CycleRef(2)]),
-        ],
-    };
-    let expected = RADT {
-        uniqueness: [0; 16],
-        items: vec![
-            Product(vec![CycleRef(1), ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0})]),
-            CycleRef(1),
-            Product(vec![CycleRef(3), CycleRef(0)]),
-            Product(vec![ExternalType(TypeRef {definition: BLOB_TYPE_HASH, item: 0}), CycleRef(0)]),
-        ],
-    };
-
-    r.normalize();
-    assert_eq!(r, expected);
-}
-
-#[test]
-fn test_radt_mapping() {
-    let mut r = RADTItem::Product(vec![
-        RADTItem::CycleRef(0),
-        RADTItem::CycleRef(1),
-        RADTItem::CycleRef(2),
-        RADTItem::CycleRef(3),
-    ]);
-
-    let expected = RADTItem::Product(vec![
-        RADTItem::CycleRef(2),
-        RADTItem::CycleRef(1),
-        RADTItem::CycleRef(3),
-        RADTItem::CycleRef(0),
-    ]);
-    r.update_refs(&vec![2, 1, 3, 0]);
-    assert_eq!(r, expected);
-}
-
-#[test]
-fn test_transpose() {
-    let mut v = vec![3, 1, 0, 2];
-    transpose(&mut v);
-    assert_eq!(v, vec![2, 1, 3, 0])
 }
