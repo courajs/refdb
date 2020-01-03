@@ -271,7 +271,6 @@ fn inner_print_val_with_labeling(
 
             let mut newt = &items[kind];
             let mut lab = &labels[kind].item;
-            let val = &**value;
 
             while let RADTItem::CycleRef(i) = newt {
                 let i = *i as usize;

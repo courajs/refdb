@@ -579,7 +579,7 @@ mod tests {
     fn test_radt_item_recode() {
         let item = RADTItem::Product(vec![RADTItem::CycleRef(12), RADTItem::CycleRef(12)]);
         let bytes = item.bytes();
-        let (empty, item2) = RADTItem::decode(&bytes).expect("hey");
+        let (_empty, item2) = RADTItem::decode(&bytes).expect("hey");
         assert_eq!(item, item2);
     }
 
