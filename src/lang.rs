@@ -55,20 +55,35 @@ pub fn parse(input: &str) -> Parsed {
 }
 
 fn parse_type(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
-    parse_name(input)
-    //' alt((parse_name,))
+    alt((
+        parse_hash,  // #abcd_1234:8
+        parse_name,  // List
+    ))(input)
 }
 fn parse_name(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     map(take_while(|c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '?' || c == '!' || c == '/'), |n| TypeSpec::Name(n))(input)
 }
 
-// fn parse_hash(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
-//     preceded(separated_pair(
-//     // at least 1 byte group (2 hex chars)
-//     map(multi1(
-// }
+use nom::sequence::tuple;
+
+fn parse_hash(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
+    let (rest, (_,bytes,_,cycle)) = tuple((char('#'), hex_bytes, char(':'), decimal_integer))(input)?;
+    // FIXME: error for hashes that are too long
+    if bytes.len() == 32 {
+        Ok((rest, TypeSpec::Hash(Hash::sure_from(&bytes), cycle)))
+    } else {
+        Ok((rest, TypeSpec::ShortHash(bytes, cycle)))
+    }
+}
+
+use nom::multi::separated_nonempty_list;
+
+fn hex_bytes(input: &str) -> IResult<&str, Vec<u8>, VerboseError<&str>> {
+    separated_nonempty_list(one_of("-_"), many1(hex_byte))(input).map(|(i, r)| (i, r.into_iter().flatten().collect()))
+}
 
 use nom::character::complete::hex_digit1;
+use nom::character::complete::digit1;
 use nom::bytes::complete::take;
 
 fn hex_byte(input: &str) -> IResult<&str, u8, VerboseError<&str>> {
@@ -76,8 +91,10 @@ fn hex_byte(input: &str) -> IResult<&str, u8, VerboseError<&str>> {
     let (_, digits) = hex_digit1(digits)?;
     Ok((rest, u8::from_str_radix(digits, 16).unwrap()))
 }
-
-// fn decimal_integer(kk
+fn decimal_integer(input: &str) -> IResult<&str, usize, VerboseError<&str>> {
+    let (rest, digits) = digit1(input)?;
+    Ok((rest, usize::from_str_radix(digits, 10).unwrap()))
+}
 
 
 #[cfg(test)]
@@ -86,6 +103,16 @@ mod tests {
 
     #[test]
     fn test_hex_bytes() {
+        assert_eq!(hex_bytes("12-ff00_04 "), Ok((" ", vec![18, 255, 0, 4])));
+    }
+
+    #[test]
+    fn test_usize() {
+        assert_eq!(decimal_integer("123 "), Ok((" ", 123usize)));
+    }
+
+    #[test]
+    fn test_hex_byte() {
         assert_eq!(hex_byte("12ff"), Ok(("ff", 18)));
     }
 
