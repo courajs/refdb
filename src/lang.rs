@@ -4,7 +4,7 @@ use nom::{
     sequence::delimited,
     branch::alt,
     bytes::complete::escaped_transform,
-    bytes::complete::take_while,
+    bytes::complete::take_while1,
     character::complete::{
         alphanumeric0, anychar, char, one_of, none_of,
     },
@@ -58,6 +58,7 @@ fn parse_type(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     alt((
         parse_hash,     // #abcd_1234:8
         parse_product,  // {key: List}
+        parse_sum,      // (yes {} | no List)
         parse_name,     // List
     ))(input)
 }
@@ -65,7 +66,7 @@ fn parse_name(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     map(parse_identifier, |n| TypeSpec::Name(n))(input)
 }
 fn parse_identifier(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
-    take_while(|c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '?' || c == '!' || c == '/')(input)
+    take_while1(|c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '?' || c == '!' || c == '/')(input)
 }
 
 
@@ -103,6 +104,7 @@ fn decimal_integer(input: &str) -> IResult<&str, usize, VerboseError<&str>> {
 }
 
 use nom::character::complete::multispace0;
+use nom::character::complete::multispace1;
 
 fn parse_product(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     map(tuple((
@@ -115,6 +117,22 @@ fn parse_product(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
             multispace0,
             char('}'))),
         |(_,_,fields,_,_)| TypeSpec::Product(fields))(input)
+}
+
+fn parse_sum(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
+    map(tuple((
+            char('('),
+            multispace0,
+            separated_list(
+                delimited(multispace0, char('|'), multispace0),
+                map(tuple((parse_identifier,multispace1,alt((parse_type,parse_empty)))), |(n,_,t)| (n, t)),
+            ),
+            multispace0,
+            char(')'))),
+        |(_,_,fields,_,_)| TypeSpec::Sum(fields))(input)
+}
+fn parse_empty(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
+    Ok((input, TypeSpec::Empty))
 }
 
 #[cfg(test)]
@@ -157,8 +175,8 @@ mod tests {
         assert_eq!(parse_type(long_seperated).assert(long_seperated), TypeSpec::Hash(Hash(hash), 3));
         assert_eq!(parse_type("{}").assert("{}"), TypeSpec::Product(Vec::new()));
         assert_eq!(parse_type(single_product).assert(single_product), TypeSpec::Product(vec![("field", TypeSpec::Name("Value"))]));
-        // assert_eq!(parse_type(multiple_product).assert(multiple_product), TypeSpec::Product(vec![("key1", TypeSpec::Name("Value")), ("key2", TypeSpec::Name("Value"))]));
-        // assert_eq!(parse_type(sum).assert(sum), TypeSpec::Sum(vec![("yes", TypeSpec::Empty), ("no", TypeSpec::Product(vec![("reason", TypeSpec::Name("Text"))])), ("other", TypeSpec::Name("Value"))]));
+        assert_eq!(parse_type(multiple_product).assert(multiple_product), TypeSpec::Product(vec![("key1", TypeSpec::Name("Value")), ("key2", TypeSpec::Name("Value"))]));
+        assert_eq!(parse_type(sum).assert(sum), TypeSpec::Sum(vec![("yes", TypeSpec::Empty), ("no", TypeSpec::Product(vec![("reason", TypeSpec::Name("Text"))])), ("other", TypeSpec::Name("Value"))]));
     }
 
     #[test]
