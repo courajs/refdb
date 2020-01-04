@@ -4,12 +4,14 @@ use nom::{
     sequence::delimited,
     branch::alt,
     bytes::complete::escaped_transform,
+    bytes::complete::take_while,
     character::complete::{
-        anychar, char, one_of, none_of,
+        alphanumeric0, anychar, char, one_of, none_of,
     },
     combinator::{
         not, map,
     },
+    multi::many1,
 };
 use hex_literal::hex;
 
@@ -40,12 +42,6 @@ pub enum TypeSpec<'a> {
     Empty,
 }
 
-fn parse_type(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
-    Ok(("", TypeSpec::Name("hey")))
-}
-
-
-
 fn parse_string(input: &str) -> Parsed {
     map(
         delimited(char('"'),
@@ -57,6 +53,15 @@ fn parse_string(input: &str) -> Parsed {
 pub fn parse(input: &str) -> Parsed {
     parse_string(input)
 }
+
+fn parse_type(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
+    parse_name(input)
+    //' alt((parse_name,))
+}
+fn parse_name(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
+    map(take_while(|c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '?' || c == '!' || c == '/'), |n| TypeSpec::Name(n))(input)
+}
+
 
 #[cfg(test)]
 mod tests {
