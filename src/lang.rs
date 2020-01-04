@@ -56,13 +56,18 @@ pub fn parse(input: &str) -> Parsed {
 
 fn parse_type(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     alt((
-        parse_hash,  // #abcd_1234:8
-        parse_name,  // List
+        parse_hash,     // #abcd_1234:8
+        parse_product,  // {key: List}
+        parse_name,     // List
     ))(input)
 }
 fn parse_name(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
-    map(take_while(|c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '?' || c == '!' || c == '/'), |n| TypeSpec::Name(n))(input)
+    map(parse_identifier, |n| TypeSpec::Name(n))(input)
 }
+fn parse_identifier(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
+    take_while(|c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '?' || c == '!' || c == '/')(input)
+}
+
 
 use nom::sequence::tuple;
 
@@ -77,6 +82,7 @@ fn parse_hash(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
 }
 
 use nom::multi::separated_nonempty_list;
+use nom::multi::separated_list;
 
 fn hex_bytes(input: &str) -> IResult<&str, Vec<u8>, VerboseError<&str>> {
     separated_nonempty_list(one_of("-_"), many1(hex_byte))(input).map(|(i, r)| (i, r.into_iter().flatten().collect()))
@@ -96,6 +102,20 @@ fn decimal_integer(input: &str) -> IResult<&str, usize, VerboseError<&str>> {
     Ok((rest, usize::from_str_radix(digits, 10).unwrap()))
 }
 
+use nom::character::complete::multispace0;
+
+fn parse_product(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
+    map(tuple((
+            char('{'),
+            multispace0,
+            separated_list(
+                delimited(multispace0, char(','), multispace0),
+                map(tuple((parse_identifier,multispace0,char(':'),multispace0,parse_type)), |(n,_,_,_,t)| (n, t)),
+            ),
+            multispace0,
+            char('}'))),
+        |(_,_,fields,_,_)| TypeSpec::Product(fields))(input)
+}
 
 #[cfg(test)]
 mod tests {
@@ -135,8 +155,8 @@ mod tests {
         assert_eq!(parse_type(short).assert(short), TypeSpec::ShortHash(prefix.to_vec(), 12));
         assert_eq!(parse_type(long).assert(long), TypeSpec::Hash(Hash(hash), 3));
         assert_eq!(parse_type(long_seperated).assert(long_seperated), TypeSpec::Hash(Hash(hash), 3));
-        // assert_eq!(parse_type("{}").assert("{}"), TypeSpec::Product(Vec::new()));
-        // assert_eq!(parse_type(single_product).assert(single_product), TypeSpec::Product(vec![("field", TypeSpec::Name("Value"))]));
+        assert_eq!(parse_type("{}").assert("{}"), TypeSpec::Product(Vec::new()));
+        assert_eq!(parse_type(single_product).assert(single_product), TypeSpec::Product(vec![("field", TypeSpec::Name("Value"))]));
         // assert_eq!(parse_type(multiple_product).assert(multiple_product), TypeSpec::Product(vec![("key1", TypeSpec::Name("Value")), ("key2", TypeSpec::Name("Value"))]));
         // assert_eq!(parse_type(sum).assert(sum), TypeSpec::Sum(vec![("yes", TypeSpec::Empty), ("no", TypeSpec::Product(vec![("reason", TypeSpec::Name("Text"))])), ("other", TypeSpec::Name("Value"))]));
     }
