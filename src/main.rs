@@ -11,6 +11,7 @@ pub mod error;
 pub mod labels;
 pub mod storage;
 pub mod types;
+pub mod lang;
 
 use crate::core::*;
 use crate::labels::*;
