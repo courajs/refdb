@@ -12,12 +12,17 @@ use nom::{
     },
 };
 
+use crate::error::AssertParsed;
+
+type Parsed<'a> = IResult<&'a str, AST, VerboseError<&'a str>>;
+
 #[derive(Debug, PartialEq, Eq)]
-pub enum AST {
+pub enum AST<'_> {
     String(String),
+    TypeDecl(&str
 }
 
-fn parse(input: &str) -> IResult<&str, AST, VerboseError<&str>> {
+fn parse_string(input: &str) -> Parsed {
     map(
         delimited(char('"'),
                   escaped_transform(none_of("\\\""), '\\', anychar),
@@ -25,28 +30,20 @@ fn parse(input: &str) -> IResult<&str, AST, VerboseError<&str>> {
     |s| AST::String(s))(input)
 }
 
+pub fn parse(input: &str) -> Parsed {
+    parse_string(input)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn test_parse_string() {
+    fn test_string_parsing() {
         let input = r#"      "hey \"Alice\" and\\or \"Bob\""      "#.trim();
-        match parse(input) {
-            Err(e) => {
-                match e {
-                    nom::Err::Incomplete(j) => println!("inc {:?}", j),
-                    nom::Err::Error(e) => {
-                        println!("{:?}", e);
-                        println!("{}", nom::error::convert_error(&input, e))
-                    },
-                    nom::Err::Failure(e) => println!("{}", nom::error::convert_error(&input, e)),
-                }
-                panic!();
-            },
-            Ok((_, result)) => {
-                assert_eq!(result, AST::String(String::from("hey \"Alice\" and\\or \"Bob\"")));
-            }
-        }
+        let output = parse_string(input).assert(input);
+        let expected = AST::String(String::from("hey \"Alice\" and\\or \"Bob\""));
+
+        assert_eq!(output, expected);
     }
 }

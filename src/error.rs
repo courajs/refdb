@@ -1,4 +1,7 @@
 use failure::Fail;
+use nom::error::VerboseError;
+use nom::IResult;
+use nom::InputLength;
 
 use crate::core::Hash;
 use crate::types::TypeRef;
@@ -72,3 +75,23 @@ pub enum MonsterError {
     #[fail(display = "labeling prob 5")]
     NumFieldMismatch,
 }
+
+pub trait AssertParsed<Output> {
+    fn assert(self, input: &str) -> Output;
+}
+impl<O> AssertParsed<O> for IResult<&str, O, VerboseError<&str>> {
+    fn assert(self, input: &str) -> O {
+        match self {
+            Err(nom::Err::Incomplete(i)) => panic!(format!("Failed to parse: Incomplete {:?}", i)),
+            Err(nom::Err::Error(e))
+            | Err(nom::Err::Failure(e))   => panic!(format!("Failed to parse:\n{}", nom::error::convert_error(input, e))),
+            Ok((rest, val)) => {
+                if rest.input_len() > 0 {
+                    panic!(format!("Parsed with {} bytes of remaining input", rest.input_len()));
+                }
+                return val;
+            }
+        }
+    }
+}
+
