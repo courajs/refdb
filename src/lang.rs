@@ -107,29 +107,25 @@ use nom::character::complete::multispace0;
 use nom::character::complete::multispace1;
 
 fn parse_product(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
-    map(tuple((
+    map(delimited(
             char('{'),
-            multispace0,
-            separated_list(
-                delimited(multispace0, char(','), multispace0),
-                map(tuple((parse_identifier,multispace0,char(':'),multispace0,parse_type)), |(n,_,_,_,t)| (n, t)),
-            ),
-            multispace0,
-            char('}'))),
-        |(_,_,fields,_,_)| TypeSpec::Product(fields))(input)
+            squishy(separated_list(
+                squishy(char(',')),
+                map(tuple((parse_identifier, squishy(char(':')), parse_type)), |(n,_,t)| (n, t)),
+            )),
+            char('}')),
+        |fields| TypeSpec::Product(fields))(input)
 }
 
 fn parse_sum(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
-    map(tuple((
+    map(delimited(
             char('('),
-            multispace0,
-            separated_list(
-                delimited(multispace0, char('|'), multispace0),
+            squishy(separated_list(
+                squishy(char('|')),
                 map(tuple((parse_identifier,multispace1,alt((parse_type,parse_empty)))), |(n,_,t)| (n, t)),
-            ),
-            multispace0,
-            char(')'))),
-        |(_,_,fields,_,_)| TypeSpec::Sum(fields))(input)
+            )),
+            char(')')),
+        |fields| TypeSpec::Sum(fields))(input)
 }
 fn parse_empty(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     Ok((input, TypeSpec::Empty))
@@ -187,4 +183,13 @@ mod tests {
 
         assert_eq!(output, expected);
     }
+
+fn squishy<I,O,E>(f: impl Fn(I) -> IResult<I,O,E>) -> impl Fn(I) -> IResult<I,O,E>
+    where
+    E: nom::error::ParseError<I>,
+    I: nom::InputTakeAtPosition,
+    <I as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone, 
+
+{
+    delimited(multispace0, f, multispace0)
 }
