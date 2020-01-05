@@ -59,8 +59,18 @@ pub fn definitions<'a>(defs: &'a [TypeDef]) -> Result<AlmostLabeledTypeDefinitio
     })
 }
 
-fn process_spec<'a>(spec: &'a TypeSpec, refs: &HashMap<&str, usize>, ex_names: &mut HashSet<&str>, prefixes: &mut HashSet<&[u8]>) -> PendingItem<'a> {
-    unimplemented!();
+fn process_spec<'a>(spec: &'a TypeSpec, refs: &HashMap<&str, usize>, ex_names: &mut HashSet<&'a str>, prefixes: &mut HashSet<&'a [u8]>) -> PendingItem<'a> {
+    match spec {
+        TypeSpec::Name(n) => {
+            if let Some(idx) = refs.get(*n) {
+                PendingItem::CycleRef(*idx)
+            } else {
+                ex_names.insert(*n);
+                PendingItem::Name(*n)
+            }
+        },
+        _ => todo!()
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
