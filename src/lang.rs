@@ -14,6 +14,7 @@ use nom::{
     multi::many1,
 };
 use hex_literal::hex;
+use indoc::indoc as dedent;
 
 use crate::error::AssertParsed;
 use crate::core::Hash;
@@ -71,6 +72,7 @@ fn parse_identifier(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
 
 
 use nom::sequence::tuple;
+use nom::sequence::preceded;
 
 fn parse_hash(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     let (rest, (_,bytes,_,cycle)) = tuple((char('#'), hex_bytes, char(':'), decimal_integer))(input)?;
@@ -184,12 +186,52 @@ mod tests {
         assert_eq!(output, expected);
     }
 
+    #[test]
+    fn test_typedefs() {
+        let input = dedent!("
+            T Nil = {};
+            T Cons = {head: Value, tail: List};
+            T List = (cons Cons | nil Nil);"
+        ).trim();
+        let expected = vec![
+            TypeDef("Nil", TypeSpec::Product(Vec::new())),
+            TypeDef("Cons", TypeSpec::Product(vec![
+                ("head", TypeSpec::Name("Value")),
+                ("tail", TypeSpec::Name("List")),
+            ])),
+            TypeDef("List", TypeSpec::Sum(vec![
+                ("cons", TypeSpec::Name("Cons")),
+                ("nil", TypeSpec::Name("Nil")),
+            ])),
+        ];
+
+        assert_eq!(parse_statements(input).assert(input), expected);
+    }
+}
+
 fn squishy<I,O,E>(f: impl Fn(I) -> IResult<I,O,E>) -> impl Fn(I) -> IResult<I,O,E>
     where
     E: nom::error::ParseError<I>,
     I: nom::InputTakeAtPosition,
     <I as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone, 
-
 {
     delimited(multispace0, f, multispace0)
+}
+
+use nom::combinator::opt;
+
+#[derive(Debug, PartialEq, Eq)]
+struct TypeDef<'a>(&'a str, TypeSpec<'a>);
+fn parse_statements(input: &str) -> IResult<&str, Vec<TypeDef>, VerboseError<&str>> {
+    delimited(
+        multispace0,
+        separated_list(
+            squishy(char(';')),
+            map(tuple((char('T'), multispace1, parse_identifier, squishy(char('=')), parse_type)),
+                |(_,_,name,_,t)| TypeDef(name, t)
+            )
+        ),
+        squishy(opt(char(';'))),
+    )
+    (input)
 }
