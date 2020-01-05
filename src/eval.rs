@@ -46,7 +46,11 @@ pub fn definitions<'a>(defs: &'a [TypeDef]) -> Result<AlmostLabeledTypeDefinitio
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct AlmostLabeledTypeDefinitions<'a>(Vec<(&'a str, PendingItem<'a>)>);
+pub struct AlmostLabeledTypeDefinitions<'a>{
+    pub names: Vec<&'a str>,
+    pub hash_prefixes: Vec<&'a [u8]>,
+    defs: Vec<(&'a str, PendingItem<'a>)>,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum PendingItem<'a> {
@@ -54,19 +58,50 @@ pub enum PendingItem<'a> {
     Sum(Vec<(&'a str, PendingItem<'a>)>),
     Product(Vec<(&'a str, PendingItem<'a>)>),
     CycleRef(usize),
-    ShortHash(TypeToResolve<'a>, usize),
-    Name(TypeToResolve<'a>),
-}
-
-#[derive(Debug, PartialEq, Eq)]
-pub enum TypeToResolve<'a> {
-    ShortHash(&'a [u8]),
+    ShortHash(&'a [u8], usize),
     Name(&'a str),
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    #[test]
+    fn test_definition_creation() {
+        let prefix: Vec<u8> = vec![8,255];
+        let defs = vec![
+            TypeDef("one", TypeSpec::Empty),
+            TypeDef("two", TypeSpec::Name("one")),
+            TypeDef("three", TypeSpec::Hash(Hash::of(b"dog"), 12)),
+            TypeDef("four", TypeSpec::Name("value")),
+            TypeDef("five", TypeSpec::ShortHash(prefix.clone(), 23)),
+            TypeDef("six", TypeSpec::Sum(vec![
+                                ("yes", TypeSpec::Name("value")),
+                                ("no", TypeSpec::ShortHash(prefix.clone(), 44)),
+            ])),
+        ];
+        let expected = AlmostLabeledTypeDefinitions {
+            names: vec!["value"],
+            hash_prefixes: vec![&prefix],
+            defs: vec![
+                ("one", PendingItem::Product(Vec::new())),
+                ("two", PendingItem::CycleRef(0)),
+                ("three", PendingItem::ExternalType( TypeRef {
+                    definition: Hash::of(b"dog"),
+                    item: 12,
+                })),
+                ("four", PendingItem::Name("value")),
+                ("five", PendingItem::ShortHash(&prefix, 23)),
+                ("six", PendingItem::Sum(vec![
+                        ("yes", PendingItem::Name("value")),
+                        ("yes", PendingItem::ShortHash(&prefix, 44)),
+                ])),
+            ]
+        };
+
+        assert_eq!(definitions(&defs).unwrap(), expected);
+    }
 
     #[test]
     fn test_err_duplicate_namings() {
