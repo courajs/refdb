@@ -69,7 +69,22 @@ fn process_spec<'a>(spec: &'a TypeSpec, refs: &HashMap<&str, usize>, ex_names: &
                 PendingItem::Name(*n)
             }
         },
-        _ => todo!()
+        TypeSpec::Hash(h, idx) => PendingItem::ExternalType(TypeRef{definition:*h,item:*idx}),
+        TypeSpec::ShortHash(pre, idx) => {
+            prefixes.insert(pre);
+            PendingItem::ShortHash(pre, *idx)
+        },
+        TypeSpec::Sum(variants) => {
+            PendingItem::Sum(variants.into_iter().map(|(name, spec)| {
+                (*name, process_spec(spec, refs, ex_names, prefixes))
+            }).collect())
+        },
+        TypeSpec::Product(fields) => {
+            PendingItem::Product(fields.into_iter().map(|(name, spec)| {
+                (*name, process_spec(spec, refs, ex_names, prefixes))
+            }).collect())
+        },
+        TypeSpec::Unit => PendingItem::Product(Vec::new()),
     }
 }
 
@@ -99,8 +114,8 @@ mod tests {
     fn test_definition_creation() {
         let prefix: Vec<u8> = vec![8,255];
         let defs = vec![
-            TypeDef("one", TypeSpec::Unit),
-            TypeDef("two", TypeSpec::Name("one")),
+            TypeDef("one", TypeSpec::Name("two")),
+            TypeDef("two", TypeSpec::Unit),
             TypeDef("three", TypeSpec::Hash(Hash::of(b"dog"), 12)),
             TypeDef("four", TypeSpec::Name("value")),
             TypeDef("five", TypeSpec::ShortHash(prefix.clone(), 23)),
@@ -113,8 +128,8 @@ mod tests {
             names: vec!["value"],
             hash_prefixes: vec![&prefix],
             defs: vec![
-                ("one", PendingItem::Product(Vec::new())),
-                ("two", PendingItem::CycleRef(0)),
+                ("one", PendingItem::CycleRef(1)),
+                ("two", PendingItem::Product(Vec::new())),
                 ("three", PendingItem::ExternalType( TypeRef {
                     definition: Hash::of(b"dog"),
                     item: 12,
@@ -123,7 +138,7 @@ mod tests {
                 ("five", PendingItem::ShortHash(&prefix, 23)),
                 ("six", PendingItem::Sum(vec![
                         ("yes", PendingItem::Name("value")),
-                        ("yes", PendingItem::ShortHash(&prefix, 44)),
+                        ("no", PendingItem::ShortHash(&prefix, 44)),
                 ])),
             ]
         };
