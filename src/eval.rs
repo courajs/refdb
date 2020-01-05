@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::collections::HashMap;
 
 use crate::lang::AST;
 use crate::error::MonsterError;
@@ -28,13 +29,13 @@ use crate::lang::TypeSpec;
 // refs.
 // Honestly types are't that big so this is probably totally fine
 pub fn definitions<'a>(defs: &'a [TypeDef]) -> Result<AlmostLabeledTypeDefinitions<'a>, MonsterError> {
-    let mut names = Vec::<&'a str>::new();
+    let mut defined_names = Vec::<&'a str>::new();
     let mut conflicts = HashSet::<&'a str>::new();
     for d in defs {
-        if names.contains(&d.0) {
+        if defined_names.contains(&d.0) {
             conflicts.insert(&d.0);
         } else {
-            names.push(&d.0);
+            defined_names.push(&d.0);
         }
     }
     if conflicts.len() > 0 {
@@ -42,7 +43,24 @@ pub fn definitions<'a>(defs: &'a [TypeDef]) -> Result<AlmostLabeledTypeDefinitio
         return Err(MonsterError::ConflictingDefinitions(names));
     }
 
-    Err(MonsterError::ConflictingDefinitions(vec![String::from("justkidding")]))
+    let refs: HashMap<&'a str, usize> = defined_names.iter().enumerate().map(|(i,name)|(*name,i)).collect();
+    let mut external_names = HashSet::<&'a str>::new();
+    let mut hash_prefixes = HashSet::<&'a [u8]>::new();
+    let mut builts: Vec<(&'a str, PendingItem<'a>)> = Vec::new();
+
+    for d in defs {
+        builts.push((&d.0, process_spec(&d.1, &refs, &mut external_names, &mut hash_prefixes)));
+    }
+
+    Ok(AlmostLabeledTypeDefinitions {
+        names: external_names.into_iter().collect(),
+        hash_prefixes: hash_prefixes.into_iter().collect(),
+        defs: builts,
+    })
+}
+
+fn process_spec<'a>(spec: &'a TypeSpec, refs: &HashMap<&str, usize>, ex_names: &mut HashSet<&str>, prefixes: &mut HashSet<&[u8]>) -> PendingItem<'a> {
+    unimplemented!();
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -71,7 +89,7 @@ mod tests {
     fn test_definition_creation() {
         let prefix: Vec<u8> = vec![8,255];
         let defs = vec![
-            TypeDef("one", TypeSpec::Empty),
+            TypeDef("one", TypeSpec::Unit),
             TypeDef("two", TypeSpec::Name("one")),
             TypeDef("three", TypeSpec::Hash(Hash::of(b"dog"), 12)),
             TypeDef("four", TypeSpec::Name("value")),
@@ -106,8 +124,8 @@ mod tests {
     #[test]
     fn test_err_duplicate_namings() {
         let defs = vec![
-            TypeDef("thing", TypeSpec::Empty),
-            TypeDef("thing", TypeSpec::Empty),
+            TypeDef("thing", TypeSpec::Unit),
+            TypeDef("thing", TypeSpec::Unit),
         ];
         match definitions(&defs) {
             Ok(_) => panic!("shouldn't succeed"),

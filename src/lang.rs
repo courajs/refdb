@@ -39,8 +39,9 @@ pub enum TypeSpec<'a> {
     Sum(Vec<(&'a str, TypeSpec<'a>)>),
     // Product type - a collection of named fields
     Product(Vec<(&'a str, TypeSpec<'a>)>),
-    // sum variant with no child value
-    Empty,
+    // product with no fields -
+    // either a unit type or a sum variant with no child value
+    Unit,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -133,7 +134,7 @@ fn parse_sum(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
         |fields| TypeSpec::Sum(fields))(input)
 }
 fn parse_empty(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
-    Ok((input, TypeSpec::Empty))
+    Ok((input, TypeSpec::Unit))
 }
 
 #[cfg(test)]
@@ -177,7 +178,7 @@ mod tests {
         assert_eq!(parse_type("{}").assert("{}"), TypeSpec::Product(Vec::new()));
         assert_eq!(parse_type(single_product).assert(single_product), TypeSpec::Product(vec![("field", TypeSpec::Name("Value"))]));
         assert_eq!(parse_type(multiple_product).assert(multiple_product), TypeSpec::Product(vec![("key1", TypeSpec::Name("Value")), ("key2", TypeSpec::Name("Value"))]));
-        assert_eq!(parse_type(sum).assert(sum), TypeSpec::Sum(vec![("yes", TypeSpec::Empty), ("no", TypeSpec::Product(vec![("reason", TypeSpec::Name("Text"))])), ("other", TypeSpec::Name("Value"))]));
+        assert_eq!(parse_type(sum).assert(sum), TypeSpec::Sum(vec![("yes", TypeSpec::Unit), ("no", TypeSpec::Product(vec![("reason", TypeSpec::Name("Text"))])), ("other", TypeSpec::Name("Value"))]));
     }
 
     #[test]
@@ -197,7 +198,7 @@ mod tests {
             T List = (cons Cons | nil Nil);"
         ).trim();
         let expected = vec![
-            TypeDef("Nil", TypeSpec::Empty),
+            TypeDef("Nil", TypeSpec::Unit),
             TypeDef("Cons", TypeSpec::Product(vec![
                 ("head", TypeSpec::Name("Value")),
                 ("tail", TypeSpec::Name("List")),
@@ -234,7 +235,7 @@ fn parse_statements(input: &str) -> IResult<&str, Vec<TypeDef>, VerboseError<&st
                     |(_,_,name,_,t)| TypeDef(name, t)
                 ),
                 map(preceded(char('T'), squishy(parse_identifier)),
-                    |name| TypeDef(name, TypeSpec::Empty)
+                    |name| TypeDef(name, TypeSpec::Unit)
                 ),
             ))
                     
