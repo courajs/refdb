@@ -74,6 +74,8 @@ pub enum MonsterError {
     LabelingProductFieldCountMismatch,
     #[fail(display = "labeling prob 5")]
     NumFieldMismatch,
+    #[fail(display = "The following definitions were made multiple times: {:?}", _0)]
+    ConflictingDefinitions(Vec<String>),
 }
 
 pub trait AssertParsed<Output> {

@@ -43,6 +43,9 @@ pub enum TypeSpec<'a> {
     Empty,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub struct TypeDef<'a>(pub &'a str, pub TypeSpec<'a>);
+
 fn parse_string(input: &str) -> Parsed {
     map(
         delimited(char('"'),
@@ -220,8 +223,7 @@ fn squishy<I,O,E>(f: impl Fn(I) -> IResult<I,O,E>) -> impl Fn(I) -> IResult<I,O,
 
 use nom::combinator::opt;
 
-#[derive(Debug, PartialEq, Eq)]
-struct TypeDef<'a>(&'a str, TypeSpec<'a>);
+
 fn parse_statements(input: &str) -> IResult<&str, Vec<TypeDef>, VerboseError<&str>> {
     delimited(
         multispace0,
