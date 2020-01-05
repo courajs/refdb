@@ -192,12 +192,12 @@ mod tests {
     #[test]
     fn test_typedefs() {
         let input = dedent!("
-            T Nil = {};
+            T Nil;
             T Cons = {head: Value, tail: List};
             T List = (cons Cons | nil Nil);"
         ).trim();
         let expected = vec![
-            TypeDef("Nil", TypeSpec::Product(Vec::new())),
+            TypeDef("Nil", TypeSpec::Empty),
             TypeDef("Cons", TypeSpec::Product(vec![
                 ("head", TypeSpec::Name("Value")),
                 ("tail", TypeSpec::Name("List")),
@@ -229,9 +229,15 @@ fn parse_statements(input: &str) -> IResult<&str, Vec<TypeDef>, VerboseError<&st
         multispace0,
         separated_list(
             squishy(char(';')),
-            map(tuple((char('T'), multispace1, parse_identifier, squishy(char('=')), parse_type)),
-                |(_,_,name,_,t)| TypeDef(name, t)
-            )
+            alt((
+                map(tuple((char('T'), multispace1, parse_identifier, squishy(char('=')), parse_type)),
+                    |(_,_,name,_,t)| TypeDef(name, t)
+                ),
+                map(preceded(char('T'), squishy(parse_identifier)),
+                    |name| TypeDef(name, TypeSpec::Empty)
+                ),
+            ))
+                    
         ),
         squishy(opt(char(';'))),
     )
