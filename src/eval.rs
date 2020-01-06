@@ -7,6 +7,10 @@ use crate::core::Hash;
 use crate::types::TypeRef;
 use crate::lang::TypeDef;
 use crate::lang::TypeSpec;
+use crate::types::RADTItem;
+use crate::labels::Labeling;
+use crate::labels::Label;
+use crate::labels::LabeledItem;
 
 // list of long hashes to confirm
 // list of named types to resolve from env
@@ -105,10 +109,152 @@ pub enum PendingItem<'a> {
     Name(&'a str),
 }
 
+impl<'a> AlmostLabeledTypeDefinitions<'a> {
+    pub fn defined_names(&self) -> Vec<&str> {
+        self.defs.iter().map(|(n,_)| *n).collect()
+    }
+    pub fn resolve(&self, names: &HashMap<&str, TypeRef>, prefixes: &HashMap<&[u8], Hash>) -> Definitions {
+        let mut types = Vec::with_capacity(self.defs.len());
+        let mut labels = Vec::with_capacity(self.defs.len());
+        
+        for d in self.defs.iter() {
+            let (t, l) = resolve_item(&d.1, names, prefixes);
+            types.push(t);
+            labels.push(Label { name: d.0.to_string(), item: l });
+        }
+
+        Definitions {
+            types,
+            labels: Labeling(labels),
+        }
+    }
+}
+
+fn resolve_item(item: &PendingItem, names: &HashMap<&str, TypeRef>, prefixes: &HashMap<&[u8], Hash>) -> (RADTItem, LabeledItem) {
+    match item {
+        PendingItem::ExternalType(r) => (RADTItem::ExternalType(*r), LabeledItem::Type),
+        PendingItem::CycleRef(idx) => (RADTItem::CycleRef(*idx), LabeledItem::Type),
+        PendingItem::Name(n) => (RADTItem::ExternalType(*names.get(n).expect("All names should be resolved")), LabeledItem::Type),
+        PendingItem::ShortHash(pre, idx) => (RADTItem::ExternalType(TypeRef{
+                    definition: *prefixes.get(pre).expect("All short hashes should be resolved"),
+                    item: *idx,
+                }), LabeledItem::Type),
+        PendingItem::Sum(variants) => {
+            let (types, labels) = variants.iter().map(|(name, item)| {
+                let (t, l) = resolve_item(item, names, prefixes);
+                (t, Label { name: name.to_string(), item: l })
+            }).unzip();
+            (RADTItem::Sum(types), LabeledItem::Sum(labels))
+        },
+        PendingItem::Product(fields) => {
+            let (types, labels) = fields.iter().map(|(name, item)| {
+                let (t, l) = resolve_item(item, names, prefixes);
+                (t, Label { name: name.to_string(), item: l })
+            }).unzip();
+            (RADTItem::Product(types), LabeledItem::Product(labels))
+        },
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Definitions {
+    types: Vec<RADTItem>,
+    labels: Labeling,
+}
+
+// #[derive(Debug, PartialEq, Eq)]
+// pub struct 
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn test_resolution() {
+        let prefix: Vec<u8> = vec![8, 255];
+
+        let unresolved = AlmostLabeledTypeDefinitions {
+            names: vec!["value"],
+            hash_prefixes: vec![&prefix],
+            defs: vec![
+                ("one", PendingItem::CycleRef(1)),
+                ("two", PendingItem::Product(Vec::new())),
+                ("three", PendingItem::ExternalType( TypeRef {
+                    definition: Hash::of(b"dog"),
+                    item: 12,
+                })),
+                ("four", PendingItem::Name("value")),
+                ("five", PendingItem::ShortHash(&prefix, 23)),
+                ("six", PendingItem::Sum(vec![
+                        ("yes", PendingItem::Name("value")),
+                        ("no", PendingItem::ShortHash(&prefix, 44)),
+                ])),
+            ]
+        };
+
+        let names: HashMap<&str, TypeRef> = [
+            ("value", TypeRef { definition: Hash::of(b"cat"), item: 9 }),
+        ].iter().cloned().collect();
+        let mut bytes = [0; 32];
+        bytes[0] = 8;
+        bytes[1] = 255;
+        bytes[31] = 19;
+        let prefixes: HashMap<&[u8], Hash> = [
+            (prefix.as_ref(), Hash(bytes))
+        ].iter().cloned().collect();
+
+        let resolved = unresolved.resolve(&names, &prefixes);
+        assert_eq!(resolved, Definitions {
+            types: vec![
+                RADTItem::CycleRef(1),
+                RADTItem::Product(Vec::new()),
+                RADTItem::ExternalType(TypeRef { definition: Hash::of(b"dog"), item: 12 }),
+                RADTItem::ExternalType(TypeRef { definition: Hash::of(b"cat"), item: 9 }),
+                RADTItem::ExternalType(TypeRef { definition: Hash(bytes.clone()), item: 23 }),
+                RADTItem::Sum(vec![
+                    RADTItem::ExternalType(TypeRef { definition: Hash::of(b"cat"), item: 9 }),
+                    RADTItem::ExternalType(TypeRef { definition: Hash(bytes.clone()), item: 44 }),
+                ]),
+            ],
+            labels: Labeling(vec![
+                Label { name: "one".to_owned(), item: LabeledItem::Type },
+                Label { name: "two".to_owned(), item: LabeledItem::Product(Vec::new()) },
+                Label { name: "three".to_owned(), item: LabeledItem::Type },
+                Label { name: "four".to_owned(), item: LabeledItem::Type },
+                Label { name: "five".to_owned(), item: LabeledItem::Type },
+                Label { name: "six".to_owned(), item: LabeledItem::Sum(vec![
+                        Label { name: "yes".to_owned(), item: LabeledItem::Type },
+                        Label { name: "no".to_owned(), item: LabeledItem::Type },
+                    ])
+                },
+            ]),
+        });
+    }
+
+    #[test]
+    fn test_definition_names() {
+        let prefix: Vec<u8> = vec![8, 255];
+        let evaled = AlmostLabeledTypeDefinitions {
+            names: vec!["value"],
+            hash_prefixes: vec![&prefix],
+            defs: vec![
+                ("one", PendingItem::CycleRef(1)),
+                ("two", PendingItem::Product(Vec::new())),
+                ("three", PendingItem::ExternalType( TypeRef {
+                    definition: Hash::of(b"dog"),
+                    item: 12,
+                })),
+                ("four", PendingItem::Name("value")),
+                ("five", PendingItem::ShortHash(&prefix, 23)),
+                ("six", PendingItem::Sum(vec![
+                        ("yes", PendingItem::Name("value")),
+                        ("no", PendingItem::ShortHash(&prefix, 44)),
+                ])),
+            ]
+        };
+
+        assert_eq!(evaled.defined_names(), vec!["one", "two", "three", "four", "five", "six"]);
+    }
 
     #[test]
     fn test_definition_creation() {

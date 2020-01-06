@@ -10,14 +10,14 @@ use crate::core::*;
 use crate::error::*;
 use crate::types::*;
 
-#[derive(Debug)]
+#[derive(Debug,PartialEq,Eq)]
 pub struct Labeling(pub Vec<Label>);
-#[derive(Debug)]
+#[derive(Debug,PartialEq,Eq)]
 pub struct Label {
     pub name: String,
     pub item: LabeledItem,
 }
-#[derive(Debug)]
+#[derive(Debug,PartialEq,Eq)]
 pub enum LabeledItem {
     Product(Vec<Label>),
     Sum(Vec<Label>),
