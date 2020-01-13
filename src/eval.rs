@@ -8,7 +8,7 @@ use crate::types::TypeRef;
 use crate::lang::TypeDef;
 use crate::lang::TypeSpec;
 use crate::types::RADTItem;
-use crate::labels::Labeling;
+use crate::labels::LabelSet;
 use crate::labels::Label;
 use crate::labels::LabeledItem;
 
@@ -92,6 +92,10 @@ fn process_spec<'a>(spec: &'a TypeSpec, refs: &HashMap<&str, usize>, ex_names: &
     }
 }
 
+pub struct Env {
+    pub names: HashMap<String, TypeRef>,
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct AlmostLabeledTypeDefinitions<'a>{
     pub names: Vec<&'a str>,
@@ -125,7 +129,7 @@ impl<'a> AlmostLabeledTypeDefinitions<'a> {
 
         Definitions {
             types,
-            labels: Labeling(labels),
+            labels: LabelSet(labels),
         }
     }
 }
@@ -159,7 +163,7 @@ fn resolve_item(item: &PendingItem, names: &HashMap<&str, TypeRef>, prefixes: &H
 #[derive(Debug, PartialEq, Eq)]
 pub struct Definitions {
     types: Vec<RADTItem>,
-    labels: Labeling,
+    labels: LabelSet,
 }
 
 // #[derive(Debug, PartialEq, Eq)]
@@ -216,7 +220,7 @@ mod tests {
                     RADTItem::ExternalType(TypeRef { definition: Hash(bytes.clone()), item: 44 }),
                 ]),
             ],
-            labels: Labeling(vec![
+            labels: LabelSet(vec![
                 Label { name: "one".to_owned(), item: LabeledItem::Type },
                 Label { name: "two".to_owned(), item: LabeledItem::Product(Vec::new()) },
                 Label { name: "three".to_owned(), item: LabeledItem::Type },

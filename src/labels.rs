@@ -11,7 +11,7 @@ use crate::error::*;
 use crate::types::*;
 
 #[derive(Debug,PartialEq,Eq)]
-pub struct Labeling(pub Vec<Label>);
+pub struct LabelSet(pub Vec<Label>);
 #[derive(Debug,PartialEq,Eq)]
 pub struct Label {
     pub name: String,
@@ -24,7 +24,7 @@ pub enum LabeledItem {
     Type,
 }
 
-impl Display for Labeling {
+impl Display for LabelSet {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for label in self.0.iter() {
             if let LabeledItem::Product(ref v) = label.item {
@@ -84,7 +84,7 @@ impl Display for LabeledItem {
 // write! returns a result, because writing to a stream may fail.
 // But writing to a string won't fail, so don't bother with a bunch of error conversion boilerplate
 #[allow(unused_must_use)]
-fn print_with_labeling(t: &RADT, l: &Labeling) -> Result<String, MonsterError> {
+fn print_with_labeling(t: &RADT, l: &LabelSet) -> Result<String, MonsterError> {
     let labels = &l.0;
     if t.items.len() != labels.len() {
         return Err(MonsterError::LabelingNumItemMismatch);
@@ -217,7 +217,7 @@ fn print_item_with_labeling(
 #[allow(unused_must_use)]
 fn print_val_with_labeling(
     spec: &TypeSpec,
-    Labeling(labels): &Labeling,
+    LabelSet(labels): &LabelSet,
     value: &RADTValue,
 ) -> Result<String, MonsterError> {
     if spec.definition.items.len() != labels.len() {
@@ -336,7 +336,7 @@ mod tests {
 
     #[test]
     fn test_labeling_formatting() {
-        let r = Labeling(vec![
+        let r = LabelSet(vec![
             Label {
                 name: String::from("Nil"),
                 item: LabeledItem::Product(Vec::new()),
@@ -410,7 +410,7 @@ mod tests {
             ],
         };
 
-        let l = Labeling(vec![
+        let l = LabelSet(vec![
             Label {
                 name: String::from("Nil"),
                 item: LabeledItem::Product(Vec::new()),
@@ -509,7 +509,7 @@ mod tests {
             ],
         };
 
-        let l = Labeling(vec![
+        let l = LabelSet(vec![
             Label {
                 name: String::from("Nil"),
                 item: LabeledItem::Product(Vec::new()),
