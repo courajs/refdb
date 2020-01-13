@@ -32,6 +32,12 @@ impl TypeSpec<'_> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct TypedValue {
+    pub kind: TypeRef,
+    pub value: RADTValue,
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct TypeRef {
     pub definition: Hash,
@@ -168,7 +174,7 @@ pub enum RADTItem {
     CycleRef(usize),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum RADTValue {
     Hash(Hash),
     Sum { kind: u8, value: Box<RADTValue> },

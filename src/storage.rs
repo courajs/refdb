@@ -47,7 +47,7 @@ pub enum Item {
     Blob(Blob),
     BlobRef(Hash),
     TypeDef(RADT),
-    Value(TypeRef, RADTValue),
+    Value(TypedValue),
 }
 
 #[derive(Debug)]
@@ -113,7 +113,7 @@ impl<'a> Db<'a> {
                     return Ok(Item::TypeDef(def));
                 } else {
                     match self.get(typing.kind.definition)? {
-                        Item::Blob(_) | Item::BlobRef(_) | Item::Value(_, _) => {
+                        Item::Blob(_) | Item::BlobRef(_) | Item::Value(_) => {
                             Err(MonsterError::UntypedTyping)
                         }
                         Item::TypeDef(radt) => {
@@ -130,7 +130,7 @@ impl<'a> Db<'a> {
                                     err: format!("{}", e),
                                 }
                             })?;
-                            Ok(Item::Value(typing.kind, instance))
+                            Ok(Item::Value(TypedValue {kind: typing.kind, value: instance}))
                         }
                     }
                 }

@@ -13,6 +13,7 @@ pub mod storage;
 pub mod types;
 pub mod lang;
 pub mod eval;
+pub mod bridge;
 
 use crate::core::*;
 use crate::labels::*;
