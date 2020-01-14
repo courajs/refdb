@@ -21,8 +21,10 @@ use crate::labels::*;
 use crate::storage::*;
 use crate::types::*;
 use crate::bridge::Bridged;
+use crate::error::MonsterError;
 
 fn run_app() -> Result<(), Error> {
+
     let args: Vec<String> = std::env::args().collect();
     println!("{:?}", args);
 
@@ -61,8 +63,18 @@ fn run_app() -> Result<(), Error> {
     }
 
     if args[1] == "fetch" {
-        // 4ac6ad03e0d75c8f2c2748ee484795ff77e30dd5b7d28e4513f814703d064590
-        let h = Hash(hex!("4ac6ad03e0d75c8f2c2748ee484795ff77e30dd5b7d28e4513f814703d064590"));
+        let bytes = match hex::decode(&args[2]) {
+            Err(e) => {
+                return Err(MonsterError::Todo("bad hex"))?
+            },
+            Ok(b) => b
+        };
+        if bytes.len() != 32 {
+            return Err(MonsterError::Todo("wrong hash length"))?
+        }
+        let h = Hash::sure_from(&bytes);
+        // dbg!(decode_item(&db.get_bytes(h)?));
+        // dbg!(decode_item(&db.get_bytes(Hash(hex!("fc350f5b37f4e30ad40c4d4da3659982354621b220294e8b3873e581dfc77a7d")))?));
         let s = db.get_string(h)?;
         println!("Here's your string: {:?}", s);
     }

@@ -24,8 +24,11 @@ impl Bridged for String {
                 }),
             ],
         };
-        let h = t.hash();
-        (t, TypeRef { definition: h, item: 0 })
+        let typing = Typing {
+            kind: RADT_TYPE_REF,
+            data: t.hash(),
+        };
+        (t, TypeRef { definition: typing.hash(), item: 0 })
     }
     fn encode(&self) -> (TypedValue, Vec<Item>) {
         let bytes = Blob {bytes: self.clone().into_bytes()};
