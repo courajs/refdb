@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use failure::Error;
+use failure::bail;
 use hex_literal::hex;
 use rkv::{Manager, Rkv, SingleStore, StoreOptions};
 
@@ -19,10 +20,22 @@ use crate::core::*;
 use crate::labels::*;
 use crate::storage::*;
 use crate::types::*;
+use crate::bridge::Bridged;
 
-fn main() -> Result<(), Error> {
-    // let args: Vec<String> = env::args().collect();
-    // println!("{:?}", args);
+fn run_app() -> Result<(), Error> {
+    let args: Vec<String> = std::env::args().collect();
+    println!("{:?}", args);
+
+    if args.len() <= 1 {
+        bail!("provide a command!")
+    }
+    if args.len() <= 2 {
+        bail!("provide an argument!")
+    }
+    if !(args[1] == "store" || args[1] == "fetch") {
+        bail!("commands are \"store\" and \"fetch\"")
+    }
+    println!("{:?}", args[1]);
 
     let arc = Manager::singleton()
         .write()
@@ -37,6 +50,39 @@ fn main() -> Result<(), Error> {
         store: &store,
     };
 
+    let (rad, stringtype) = String::radt();
+    db.put_item(&Item::TypeDef(rad))?;
+
+    if args[1] == "store" {
+        let (val, deps) = args[2].encode();
+        for i in deps { db.put_item(&i)?; }
+        let h = db.put_item(&Item::Value(val))?;
+        println!("{:?}", h);
+    }
+
+    if args[1] == "fetch" {
+        // 4ac6ad03e0d75c8f2c2748ee484795ff77e30dd5b7d28e4513f814703d064590
+        let h = Hash(hex!("4ac6ad03e0d75c8f2c2748ee484795ff77e30dd5b7d28e4513f814703d064590"));
+        let s = db.get_string(h)?;
+        println!("Here's your string: {:?}", s);
+    }
+
+    Ok(())
+}
+
+fn main() {
+    match run_app() {
+        Ok(()) => {},
+        Err(e) => {
+            println!("{}", e);
+            std::process::exit(1);
+        }
+    }
+}
+
+
+
+    /*
     let blob1 = Blob {
         bytes: b"abc"[..].into(),
     };
@@ -109,83 +155,4 @@ fn main() -> Result<(), Error> {
 
     db.put(&instance)?;
     db.put(&typing)?;
-
-    let utf8string = RADT {
-        uniqueness: hex!("cafebabe ba5eba11 b01dface ca11ab1e"),
-        items: vec![RADTItem::ExternalType(TypeRef {
-            definition: BLOB_TYPE_HASH,
-            item: 0,
-        })],
-    };
-    let utf8typedef = Typing {
-        kind: TypeRef {
-            definition: RADT_TYPE_HASH,
-            item: 0,
-        },
-        data: utf8string.hash(),
-    };
-
-    db.put(&utf8string)?;
-    db.put(&utf8typedef)?;
-
-    let utf8hash = utf8typedef.hash();
-    let utf8 = TypeRef {
-        definition: utf8hash,
-        item: 0,
-    };
-
-    let mut defs = RADT {
-        uniqueness: [0; 16],
-        items: vec![
-            // 0: nil
-            RADTItem::Product(Vec::new()),
-            // 1: single label
-            RADTItem::Product(vec![
-                // text label
-                RADTItem::ExternalType(TypeRef {
-                    definition: utf8hash,
-                    item: 0,
-                }),
-                // item it's labeling. Either a deeper labeling, or nil when
-                // the type bottoms out on an ExternalType
-                RADTItem::CycleRef(6),
-            ]),
-            // 2: label list cons
-            RADTItem::Product(vec![RADTItem::CycleRef(1), RADTItem::CycleRef(3)]),
-            // 3: label list
-            RADTItem::Sum(vec![RADTItem::CycleRef(0), RADTItem::CycleRef(2)]),
-            // 4: product field labels
-            RADTItem::CycleRef(3),
-            // 5: variant names
-            RADTItem::CycleRef(3),
-            // 6: Single type labeling - product, sum, or nil if it refers to an instance of another
-            // type
-            RADTItem::Sum(vec![
-                RADTItem::CycleRef(4),
-                RADTItem::CycleRef(5),
-                RADTItem::CycleRef(0),
-            ]),
-            // 7: item labelings cons
-            RADTItem::Product(vec![RADTItem::CycleRef(6), RADTItem::CycleRef(8)]),
-            // 8: item labels
-            RADTItem::Sum(vec![RADTItem::CycleRef(0), RADTItem::CycleRef(7)]),
-        ],
-    };
-
-    // Nil;
-    // Cons = {head: (nah | bool (yes | no) | val _ | struct {val: _}), tail: List};
-    // List = (Cons | Nil);
-
-    /*
-
-    let (typeref, val) = match db.get(typing.hash())? {
-        Item::Value(t, v) => (t, v),
-        _ => bail!("nah"),
-    };
-
-    dbg!(typeref);
-    dbg!(val);
     */
-
-    Ok(())
-}

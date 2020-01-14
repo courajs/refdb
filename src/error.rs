@@ -80,6 +80,8 @@ pub enum MonsterError {
     BridgedMissingDependency,
     #[fail(display = "A dependency of a bridged type was of the wrong kind")]
     BridgedMistypedDependency,
+    #[fail(display = "todo: {}", _0)]
+    Todo(&'static str),
 }
 
 pub trait AssertParsed<Output> {

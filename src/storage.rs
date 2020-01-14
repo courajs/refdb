@@ -96,7 +96,10 @@ impl<'a> Db<'a> {
     pub fn put_item(&self, item: &Item) -> Result<Hash, MonsterError> {
         match item {
             Item::Blob(b) => self.put(b),
-            Item::TypeDef(t) => self.put(t),
+            Item::TypeDef(t) => {
+                let body = self.put(t)?;
+                self.put(&Typing { kind: RADT_TYPE_REF, data: body })
+            },
             Item::BlobRef(h) => self.put(&Typing { kind: BLOB_TYPE_REF, data: *h}),
             Item::Value(val) => {
                 let h = self.put(&val.value)?;
@@ -115,6 +118,30 @@ impl<'a> Db<'a> {
             Some(Value::Blob(bytes)) => Ok(bytes.into()),
             Some(_) => Err(MonsterError::NonBlob(hash)),
             None => Err(MonsterError::NotFound(hash)),
+        }
+    }
+
+    pub fn get_string(&self, hash: Hash) -> Result<String, MonsterError> {
+        use std::collections::HashMap;
+        use crate::bridge::Bridged;
+        let s = self.get(hash)?;
+        match s {
+            Item::Value(val) => {
+                let (_, t) = String::radt();
+                if val.kind != t {
+                    return Err(MonsterError::Todo("not a string"));
+                }
+                match val.value {
+                    RADTValue::Hash(h) => {
+                        let b = self.get(h)?;
+                        let mut deps = HashMap::new();
+                        deps.insert(h, b);
+                        String::decode(&val, deps)
+                    },
+                    _ => return Err(MonsterError::Todo("not a string 2"))
+                }
+            },
+            _ => return Err(MonsterError::Todo("not a string"))
         }
     }
 
