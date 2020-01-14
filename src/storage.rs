@@ -50,6 +50,20 @@ pub enum Item {
     Value(TypedValue),
 }
 
+impl Item {
+    pub fn hash(&self) -> Hash {
+        match self {
+            Item::Blob(b) => b.hash(),
+            Item::BlobRef(h) => (Typing { kind: BLOB_TYPE_REF, data: *h }).hash(),
+            Item::TypeDef(t) => t.hash(),
+            Item::Value(val) => {
+                let h = val.value.hash();
+                return (Typing { kind: val.kind, data: h }).hash()
+            },
+        }
+    }
+}
+
 #[derive(Debug)]
 pub enum LiteralItem {
     Blob(Blob),

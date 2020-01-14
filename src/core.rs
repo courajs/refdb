@@ -17,7 +17,7 @@ pub trait Decodable: Sized {
     fn decode(bytes: &[u8]) -> IResult<&[u8], Self>;
 }
 
-#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Copy, Clone, Hash, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Hash(pub [u8; 32]);
 impl AsRef<[u8]> for Hash {
     fn as_ref(&self) -> &[u8] {

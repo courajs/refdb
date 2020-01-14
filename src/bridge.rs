@@ -37,8 +37,22 @@ impl Bridged for String {
              Item::Blob(bytes),
         ])
     }
-    fn decode(v: &TypedValue, deps: HashMap<Hash, Item>) -> Result<Self, MonsterError> {
-        todo!()
+    fn decode(v: &TypedValue, mut deps: HashMap<Hash, Item>) -> Result<Self, MonsterError> {
+        let (rad, t) = Self::radt();
+        if t != v.kind {
+            return Err(MonsterError::BridgedMistypedDependency)
+        }
+        validate_radt_instance(&rad, t.item, &v.value)?;
+        let body = match v.value {
+            RADTValue::Hash(h) => h,
+            _ => return Err(MonsterError::BridgedMistypedDependency),
+        };
+        let bytes = match deps.remove(&body) {
+            Some(Item::Blob(b)) => b.bytes,
+            None => return Err(MonsterError::BridgedMissingDependency),
+            _ => return Err(MonsterError::BridgedMistypedDependency),
+        };
+        String::from_utf8(bytes).map_err(|e| MonsterError::BridgedMistypedDependency)
     }
 }
 
@@ -50,8 +64,10 @@ mod tests {
     fn test_str_roundtrip() {
         let s = String::from("hello");
         let t = String::radt();
-        let (val, deps) = s.encode();
-        // let env = deps.map(
+        let (val, mut deps) = s.encode();
+        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
+        let s2 = String::decode(&val, env).unwrap();
+        assert_eq!(s, s2);
     }
 }
 
