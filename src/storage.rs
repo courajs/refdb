@@ -79,6 +79,18 @@ impl<'a> Db<'a> {
         Ok(hash)
     }
 
+    pub fn put_item(&self, item: &Item) -> Result<Hash, MonsterError> {
+        match item {
+            Item::Blob(b) => self.put(b),
+            Item::TypeDef(t) => self.put(t),
+            Item::BlobRef(h) => self.put(&Typing { kind: BLOB_TYPE_REF, data: *h}),
+            Item::Value(val) => {
+                let h = self.put(&val.value)?;
+                self.put(&Typing { kind: val.kind, data: h })
+            }
+        }
+    }
+
     pub fn get_bytes(&self, hash: Hash) -> Result<Vec<u8>, MonsterError> {
         let reader = self.env.read().expect("reader");
         let r = self

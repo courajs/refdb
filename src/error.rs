@@ -76,6 +76,10 @@ pub enum MonsterError {
     NumFieldMismatch,
     #[fail(display = "The following definitions were made multiple times: {:?}", _0)]
     ConflictingDefinitions(Vec<String>),
+    #[fail(display = "All dependencies must be provided to rehydrate a bridged type")]
+    BridgedMissingDependency,
+    #[fail(display = "A dependency of a bridged type was of the wrong kind")]
+    BridgedMistypedDependency,
 }
 
 pub trait AssertParsed<Output> {

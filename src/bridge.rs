@@ -1,18 +1,16 @@
 // translations between rust structs and db values
 
+use std::collections::HashMap;
+
 use crate::core::*;
 use crate::types::*;
 use crate::storage::*;
+use crate::error::MonsterError;
 
-pub trait Bridged {
+pub trait Bridged: Sized {
     fn radt() -> (RADT, TypeRef);
-    fn encode(&self) -> (Typing, Vec<PersistedItem>);
-    fn decode(v: &RADTValue, deps: &[PersistedItem]) -> Self;
-}
-
-pub enum PersistedItem {
-    Blob(Blob),
-    TypedValue(TypedValue),
+    fn encode(&self) -> (TypedValue, Vec<Item>);
+    fn decode(v: &TypedValue, deps: HashMap<Hash, Item>) -> Result<Self, MonsterError>;
 }
 
 impl Bridged for String {
@@ -29,18 +27,17 @@ impl Bridged for String {
         let h = t.hash();
         (t, TypeRef { definition: h, item: 0 })
     }
-    fn encode(&self) -> (Typing, Vec<PersistedItem>) {
+    fn encode(&self) -> (TypedValue, Vec<Item>) {
         let bytes = Blob {bytes: self.clone().into_bytes()};
         let (rad, t) = Self::radt();
         let val = RADTValue::Hash(bytes.hash());
         let thing = validate_radt_instance(&rad, t.item, &val).expect("this should match");
-        let typing = Typing { kind: t, data: val.hash() };
-        (typing, vec![
-             PersistedItem::TypedValue(TypedValue{kind: t, value: val}),
-             PersistedItem::Blob(bytes),
+        let typed = TypedValue { kind: t, value: val };
+        (typed, vec![
+             Item::Blob(bytes),
         ])
     }
-    fn decode(v: &RADTValue, deps: &[PersistedItem]) -> Self {
+    fn decode(v: &TypedValue, deps: HashMap<Hash, Item>) -> Result<Self, MonsterError> {
         todo!()
     }
 }
@@ -53,7 +50,8 @@ mod tests {
     fn test_str_roundtrip() {
         let s = String::from("hello");
         let t = String::radt();
-        let (reference, stored_vals) = s.encode();
+        let (val, deps) = s.encode();
+        // let env = deps.map(
     }
 }
 
