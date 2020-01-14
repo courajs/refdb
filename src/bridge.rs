@@ -30,7 +30,15 @@ impl Bridged for String {
         (t, TypeRef { definition: h, item: 0 })
     }
     fn encode(&self) -> (Typing, Vec<PersistedItem>) {
-        todo!()
+        let bytes = Blob {bytes: self.clone().into_bytes()};
+        let (rad, t) = Self::radt();
+        let val = RADTValue::Hash(bytes.hash());
+        let thing = validate_radt_instance(&rad, t.item, &val).expect("this should match");
+        let typing = Typing { kind: t, data: val.hash() };
+        (typing, vec![
+             PersistedItem::TypedValue(TypedValue{kind: t, value: val}),
+             PersistedItem::Blob(bytes),
+        ])
     }
     fn decode(v: &RADTValue, deps: &[PersistedItem]) -> Self {
         todo!()
@@ -45,7 +53,7 @@ mod tests {
     fn test_str_roundtrip() {
         let s = String::from("hello");
         let t = String::radt();
-        // let (reference, stored_vals) = s.encode();
+        let (reference, stored_vals) = s.encode();
     }
 }
 
