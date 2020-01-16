@@ -136,7 +136,7 @@ impl<'a> Db<'a> {
                         let b = self.get(h)?;
                         let mut deps = HashMap::new();
                         deps.insert(h, b);
-                        String::decode(&val, deps)
+                        String::from_value(&val, deps)
                     },
                     _ => return Err(MonsterError::Todo("not a string 2"))
                 }

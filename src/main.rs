@@ -26,7 +26,6 @@ use crate::error::MonsterError;
 fn run_app() -> Result<(), Error> {
 
     let args: Vec<String> = std::env::args().collect();
-    println!("{:?}", args);
 
     if args.len() <= 1 {
         bail!("provide a command!")
@@ -37,7 +36,6 @@ fn run_app() -> Result<(), Error> {
     if !(args[1] == "store" || args[1] == "fetch") {
         bail!("commands are \"store\" and \"fetch\"")
     }
-    println!("{:?}", args[1]);
 
     let arc = Manager::singleton()
         .write()
@@ -56,7 +54,7 @@ fn run_app() -> Result<(), Error> {
     db.put_item(&Item::TypeDef(rad))?;
 
     if args[1] == "store" {
-        let (val, deps) = args[2].encode();
+        let (val, deps) = args[2].to_value();
         for i in deps { db.put_item(&i)?; }
         let h = db.put_item(&Item::Value(val))?;
         println!("{:?}", h);
@@ -73,8 +71,6 @@ fn run_app() -> Result<(), Error> {
             return Err(MonsterError::Todo("wrong hash length"))?
         }
         let h = Hash::sure_from(&bytes);
-        // dbg!(decode_item(&db.get_bytes(h)?));
-        // dbg!(decode_item(&db.get_bytes(Hash(hex!("fc350f5b37f4e30ad40c4d4da3659982354621b220294e8b3873e581dfc77a7d")))?));
         let s = db.get_string(h)?;
         println!("Here's your string: {:?}", s);
     }
