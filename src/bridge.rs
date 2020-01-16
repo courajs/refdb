@@ -10,7 +10,7 @@ use crate::error::MonsterError;
 pub trait Bridged: Sized {
     fn radt() -> (RADT, TypeRef);
     fn to_value(&self) -> (TypedValue, Vec<Item>);
-    fn from_value(v: &TypedValue, deps: HashMap<Hash, Item>) -> Result<Self, MonsterError>;
+    fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError>;
 }
 
 impl Bridged for String {
@@ -37,7 +37,7 @@ impl Bridged for String {
              Item::Blob(bytes),
         ])
     }
-    fn from_value(v: &TypedValue, mut deps: HashMap<Hash, Item>) -> Result<Self, MonsterError> {
+    fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
         let (rad, t) = Self::radt();
         if t != v.kind {
             return Err(MonsterError::BridgedMistypedDependency)
@@ -47,8 +47,8 @@ impl Bridged for String {
             RADTValue::Hash(h) => h,
             _ => return Err(MonsterError::BridgedMistypedDependency),
         };
-        let bytes = match deps.remove(&body) {
-            Some(Item::Blob(b)) => b.bytes,
+        let bytes = match deps.get(&body) {
+            Some(Item::Blob(b)) => b.bytes.clone(),
             None => return Err(MonsterError::BridgedMissingDependency),
             _ => return Err(MonsterError::BridgedMistypedDependency),
         };
@@ -63,36 +63,10 @@ impl Bridged for RADT {
     fn to_value(&self) -> (TypedValue, Vec<Item>) {
         todo!();
     }
-    fn from_value(v: &TypedValue, deps: HashMap<Hash, Item>) -> Result<Self, MonsterError> {
+    fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
         todo!();
     }
 }
-
-// impl Bridged for TypeRef {
-//     fn radt() -> (RADT, TypeRef) {
-//         let t = RADT {
-//             uniqueness: b"utf8 string-----".to_owned(),
-//             items: vec![
-//                 RADTItem::ExternalType(TypeRef {
-//                     definition: BLOB_TYPE_HASH,
-//                     item: 0,
-//                 }),
-//             ],
-//         };
-//         let typing = Typing {
-//             kind: RADT_TYPE_REF,
-//             data: t.hash(),
-//         };
-//         (t, TypeRef { definition: typing.hash(), item: 0 })
-//     }
-//     fn to_value(&self) -> (TypedValue, Vec<Item>) {
-//         todo!();
-//     }
-//     fn from_value(v: &TypedValue, deps: HashMap<Hash, Item>) -> Result<Self, MonsterError> {
-//         todo!();
-//     }
-// }
-
 impl Bridged for usize {
     fn radt() -> (RADT, TypeRef) {
         let t = RADT {
@@ -118,7 +92,7 @@ impl Bridged for usize {
              Item::Blob(blob),
         ])
     }
-    fn from_value(v: &TypedValue, mut deps: HashMap<Hash, Item>) -> Result<Self, MonsterError> {
+    fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
         let (rad, t) = Self::radt();
         if t != v.kind {
             return Err(MonsterError::BridgedMistypedDependency)
@@ -128,8 +102,8 @@ impl Bridged for usize {
             RADTValue::Hash(h) => h,
             _ => return Err(MonsterError::BridgedMistypedDependency),
         };
-        let bytes = match deps.remove(&body) {
-            Some(Item::Blob(b)) => b.bytes,
+        let bytes = match deps.get(&body) {
+            Some(Item::Blob(b)) => b.bytes.clone(),
             None => return Err(MonsterError::BridgedMissingDependency),
             _ => return Err(MonsterError::BridgedMistypedDependency),
         };
@@ -141,6 +115,47 @@ impl Bridged for usize {
     }
 }
 
+impl Bridged for TypeRef {
+    fn radt() -> (RADT, TypeRef) {
+        let (_, u_size) = usize::radt();
+        let t = RADT {
+            uniqueness: b"core:TypeRef----".to_owned(),
+            items: vec![
+                RADTItem::Product(vec![
+                    RADTItem::ExternalType(RADT_TYPE_REF),
+                    RADTItem::ExternalType(u_size),
+                ]),
+            ],
+        };
+        let typing = Typing {
+            kind: RADT_TYPE_REF,
+            data: t.hash(),
+        };
+        (t, TypeRef { definition: typing.hash(), item: 0 })
+    }
+    fn to_value(&self) -> (TypedValue, Vec<Item>) {
+        let (item, mut deps) = self.item.to_value();
+        let item_hash = typing_from_typed_val(&item).hash();
+
+        let (rad, t) = Self::radt();
+        let val = RADTValue::Product(vec![
+                    RADTValue::Hash(self.definition),
+                    RADTValue::Hash(item_hash),
+        ]);
+
+        debug_assert!(validate_radt_instance(&rad, t.item, &val).is_ok());
+
+        let typed = TypedValue { kind: t, value: val };
+        deps.push(Item::Value(item));
+
+        (typed, deps)
+    }
+    fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
+        todo!();
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,7 +166,7 @@ mod tests {
         // let t = String::radt();
         let (val, mut deps) = s.to_value();
         let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
-        let s2 = String::from_value(&val, env).unwrap();
+        let s2 = String::from_value(&val, &env).unwrap();
         assert_eq!(s, s2);
     }
 
@@ -161,26 +176,26 @@ mod tests {
         let _ = usize::radt();
         let (val, mut deps) = n.to_value();
         let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
-        let n2 = <usize as Bridged>::from_value(&val, env).unwrap();
+        let n2 = usize::from_value(&val, &env).unwrap();
         assert_eq!(n, n2);
         // let (val, mut deps) = n.to_value();
         // let env
     }
 
-    // #[test]
-    // fn test_typerefs() {
-    //     let r = TypeRef {
-    //         definition: Hash::of(b"owl"),
-    //         item: 290,
-    //     };
-    //     let _ = TypeRef::radt();
-    //     let (val, mut deps) = r.to_value();
-    //     let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
-    //     let r2 = <usize as Bridged>::from_value(&val, env).unwrap();
-    //     assert_eq!(r, r2);
-    //     // let (val, mut deps) = n.to_value();
-    //     // let env
-    // }
+    #[test]
+    fn test_typerefs() {
+        let r = TypeRef {
+            definition: Hash::of(b"owl"),
+            item: 290,
+        };
+        let _ = TypeRef::radt();
+        let (val, mut deps) = r.to_value();
+        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
+        let r2 = TypeRef::from_value(&val, &env).unwrap();
+        assert_eq!(r, r2);
+        // let (val, mut deps) = n.to_value();
+        // let env
+    }
 
     // #[test]
     // fn test_radt_roundtrip() {

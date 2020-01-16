@@ -79,6 +79,13 @@ pub fn decode_item(bytes: &[u8]) -> IResult<&[u8], LiteralItem> {
     )
 }
 
+pub fn typing_from_typed_val(v: &TypedValue) -> Typing {
+    Typing {
+        kind: v.kind,
+        data: v.value.hash(),
+    }
+}
+
 impl<'a> Db<'a> {
     pub fn put(&self, item: &impl Storable) -> Result<Hash, MonsterError> {
         // FIXME - handle errors properly here
@@ -136,7 +143,7 @@ impl<'a> Db<'a> {
                         let b = self.get(h)?;
                         let mut deps = HashMap::new();
                         deps.insert(h, b);
-                        String::from_value(&val, deps)
+                        String::from_value(&val, &deps)
                     },
                     _ => return Err(MonsterError::Todo("not a string 2"))
                 }
