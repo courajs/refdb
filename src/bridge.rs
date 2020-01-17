@@ -111,7 +111,6 @@ impl Bridged for usize {
         let mut b = [0;8];
         b.copy_from_slice(&bytes);
         Ok(usize::from_be_bytes(b))
-        // String::from_utf8(bytes).map_err(|e| MonsterError::BridgedMistypedDependency)
     }
 }
 
@@ -151,7 +150,32 @@ impl Bridged for TypeRef {
         (typed, deps)
     }
     fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
-        todo!();
+        let (rad, t) = Self::radt();
+        if t != v.kind {
+            return Err(MonsterError::BridgedMistypedDependency)
+        }
+        validate_radt_instance(&rad, t.item, &v.value)?;
+        let fields = match &v.value {
+            RADTValue::Product(fields) => fields,
+            _ => return Err(MonsterError::BridgedMistypedDependency),
+        };
+        let definition = match fields[0] {
+            RADTValue::Hash(h) => h,
+            _ => return Err(MonsterError::BridgedMistypedDependency),
+        };
+        let item_hash = match fields[1] {
+            RADTValue::Hash(h) => h,
+            _ => return Err(MonsterError::BridgedMistypedDependency),
+        };
+        let u_size = match deps.get(&item_hash) {
+            Some(Item::Value(u_size)) => u_size,
+            None => return Err(MonsterError::BridgedMissingDependency),
+            _ => return Err(MonsterError::BridgedMistypedDependency),
+        };
+
+        let item = usize::from_value(&u_size, deps)?;
+
+        Ok(TypeRef { definition, item })
     }
 }
 
@@ -193,8 +217,6 @@ mod tests {
         let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
         let r2 = TypeRef::from_value(&val, &env).unwrap();
         assert_eq!(r, r2);
-        // let (val, mut deps) = n.to_value();
-        // let env
     }
 
     // #[test]
