@@ -107,3 +107,16 @@ impl Decodable for Blob {
         ))
     }
 }
+
+macro_rules! sure {
+    ($target:expr, $p:pat => $res:expr; $else:expr) => {
+        match $target {
+            $p => $res,
+            _ => $else
+        }
+    };
+    ($target:expr, $p:pat => $res:expr) => {
+        sure!($target, $p => $res; panic!("Expected {} to match pattern: {}", stringify!($target), stringify!($p)))
+    };
+}
+

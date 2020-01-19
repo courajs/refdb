@@ -7,6 +7,7 @@ use failure::bail;
 use hex_literal::hex;
 use rkv::{Manager, Rkv, SingleStore, StoreOptions};
 
+#[macro_use]
 pub mod core;
 pub mod error;
 pub mod labels;

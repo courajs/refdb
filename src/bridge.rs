@@ -182,13 +182,13 @@ impl Bridged for RADT {
                 RADTItem::Sum(variants) => {
                     RADTValue::Sum {
                         kind: 1,
-                        value: Box::new(value_list(variants.iter(), |item| radt_item_to_value(item, deps))),
+                        value: Box::new(translate_vec_to_value_list(variants.iter(), |item| radt_item_to_value(item, deps))),
                     }
                 },
                 RADTItem::Product(fields) => {
                     RADTValue::Sum {
                         kind: 2,
-                        value: Box::new(value_list(fields.iter(), |item| radt_item_to_value(item, deps))),
+                        value: Box::new(translate_vec_to_value_list(fields.iter(), |item| radt_item_to_value(item, deps))),
                     }
                 },
                 RADTItem::CycleRef(item) => {
@@ -214,22 +214,60 @@ impl Bridged for RADT {
 
         let val = RADTValue::Product(vec![
                     RADTValue::Hash(uniq_hash),
-                    value_list(self.items.iter(), |item| radt_item_to_value(item, &mut deps)),
+                    translate_vec_to_value_list(self.items.iter(), |item| radt_item_to_value(item, &mut deps)),
         ]);
         let (rad, typeref) = Self::radt();
-        dbg!(&typeref);
-        dbg!(&rad);
-        dbg!(&val);
         debug_assert!(validate_radt_instance(&rad, typeref.item, &val).is_ok(), "{:?}", validate_radt_instance(&rad, typeref.item, &val));
         let typed = TypedValue { kind: typeref, value: val };
         (typed, deps)
     }
     fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
+        let (rad, t) = Self::radt();
+        if v.kind != t {
+            return Err(MonsterError::BridgedMistypedDependency);
+        }
+        validate_radt_instance(&rad, t.item, &v.value)?;
+        let (uniq_hash, items) = sure!(&v.value, RADTValue::Product(fields) => {
+            sure!(fields[0], RADTValue::Hash(h) => (h, &fields[1]))
+        });
+
+        let r_items = translate_value_list_to_vec(items, |item| {
+            match item {
+                // ExternalType
+                RADTValue::Sum{kind: 0, value} => {
+                    let h = sure!(value.deref(), RADTValue::Hash(h) => h);
+                    match deps.get(h) {
+                        Some(Item::Value(tr)) => Ok(RADTItem::ExternalType(TypeRef::from_value(tr, deps)?)),
+                        Some(_) => Err(MonsterError::BridgedMistypedDependency),
+                        None => Err(MonsterError::BridgedMissingDependency),
+                    }
+                },
+                // Sum
+                RADTValue::Sum{kind: 1, value} => {
+                    todo!();
+                },
+                // Product
+                RADTValue::Sum{kind: 2, value} => {
+                    todo!();
+                },
+                // CycleRef
+                RADTValue::Sum{kind: 3, value} => {
+                    let h = sure!(value.deref(), RADTValue::Hash(h) => h);
+                    match deps.get(h) {
+                        Some(Item::Value(tr)) => Ok(RADTItem::CycleRef(usize::from_value(tr, deps)?)),
+                        Some(_) => Err(MonsterError::BridgedMistypedDependency),
+                        None => Err(MonsterError::BridgedMissingDependency),
+                    }
+                },
+                _ => panic!("It validated, this shouldn't happen")
+            }
+        });
+        dbg!(r_items);
         todo!();
     }
 }
 
-fn value_list<T>(items: impl DoubleEndedIterator<Item=T>, mut f: impl FnMut(T) -> RADTValue) -> RADTValue {
+fn translate_vec_to_value_list<T>(items: impl DoubleEndedIterator<Item=T>, mut f: impl FnMut(T) -> RADTValue) -> RADTValue {
     items.rfold(RADTValue::Sum { kind: 0, value: Box::new(RADTValue::Product(Vec::new())) }, |acc, item| {
         RADTValue::Sum {
             kind: 1,
@@ -242,7 +280,38 @@ fn value_list<T>(items: impl DoubleEndedIterator<Item=T>, mut f: impl FnMut(T) -
         }
     })
 }
-// fn make_list(f: FnMut(&RADTItem) -> RADTValue) -> (RADTValue, FnMut
+use std::ops::Deref;
+
+fn translate_value_list_to_vec<T>(mut v: &RADTValue, mut f: impl FnMut(&RADTValue) -> Result<T, MonsterError>) -> Result<Vec<T>, MonsterError> {
+    let mut result = Vec::new();
+    while let RADTValue::Sum { kind: 1, value } = v {
+        match value.deref() {
+            RADTValue::Product(fields) => {
+                if fields.len() != 2 {
+                    return Err(MonsterError::BridgedMistypedDependency);
+                }
+                result.push(f(&fields[0])?);
+                v = &fields[1];
+            },
+            _ => return Err(MonsterError::BridgedMistypedDependency)
+        }
+    }
+
+    if let RADTValue::Sum { kind: 0, value } = v {
+        match value.deref() {
+            RADTValue::Product(v) => {
+                if v.len() != 0 {
+                    return Err(MonsterError::BridgedMistypedDependency);
+                }
+            },
+            _ => return Err(MonsterError::BridgedMistypedDependency)
+        }
+    } else {
+        return Err(MonsterError::BridgedMistypedDependency);
+    }
+
+    Ok(result)
+}
 
 
 impl Bridged for usize {
@@ -300,7 +369,6 @@ mod tests {
     #[test]
     fn test_str_roundtrip() {
         let s = String::from("hello");
-        // let t = String::radt();
         let (val, mut deps) = s.to_value();
         let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
         let s2 = String::from_value(&val, &env).unwrap();
@@ -315,8 +383,6 @@ mod tests {
         let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
         let n2 = usize::from_value(&val, &env).unwrap();
         assert_eq!(n, n2);
-        // let (val, mut deps) = n.to_value();
-        // let env
     }
 
     #[test]
@@ -353,9 +419,9 @@ mod tests {
         };
         let _ = RADT::radt();
         let (val, mut deps) = r.to_value();
-        // let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
-        // let r2 = RADT::from_value(&val, &env).unwrap();
-        // assert_eq!(r, r2);
+        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
+        let r2 = RADT::from_value(&val, &env).unwrap();
+        assert_eq!(r, r2);
     }
 }
 
