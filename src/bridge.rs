@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use crate::core::*;
 use crate::types::*;
+use crate::labels::*;
 use crate::storage::*;
 use crate::error::MonsterError;
 
@@ -228,10 +229,24 @@ impl Bridged for RADT {
         }
         validate_radt_instance(&rad, t.item, &v.value)?;
         let (uniq_hash, items) = sure!(&v.value, RADTValue::Product(fields) => {
-            sure!(fields[0], RADTValue::Hash(h) => (h, &fields[1]))
+            sure!(fields[0], RADTValue::Hash(ref h) => (h, &fields[1]))
         });
 
-        let r_items = translate_value_list_to_vec(items, |item| {
+        let uniqueness = match deps.get(uniq_hash) {
+            Some(Item::Blob(Blob{bytes})) => {
+                if bytes.len() == 16 {
+                    let mut uniq = [0;16];
+                    uniq.copy_from_slice(bytes);
+                    uniq
+                } else {
+                    return Err(MonsterError::BridgedMistypedDependency);
+                }
+            },
+            Some(_) => return Err(MonsterError::BridgedMistypedDependency),
+            None => return Err(MonsterError::BridgedMissingDependency),
+        };
+
+        fn do_item(item: &RADTValue, deps: &HashMap<Hash, Item>) -> Result<RADTItem, MonsterError> {
             match item {
                 // ExternalType
                 RADTValue::Sum{kind: 0, value} => {
@@ -244,11 +259,11 @@ impl Bridged for RADT {
                 },
                 // Sum
                 RADTValue::Sum{kind: 1, value} => {
-                    todo!();
+                    Ok(RADTItem::Sum(translate_value_list_to_vec(value.deref(), |item| do_item(item, deps))?))
                 },
                 // Product
                 RADTValue::Sum{kind: 2, value} => {
-                    todo!();
+                    Ok(RADTItem::Product(translate_value_list_to_vec(value.deref(), |item| do_item(item, deps))?))
                 },
                 // CycleRef
                 RADTValue::Sum{kind: 3, value} => {
@@ -261,9 +276,11 @@ impl Bridged for RADT {
                 },
                 _ => panic!("It validated, this shouldn't happen")
             }
-        });
-        dbg!(r_items);
-        todo!();
+        }
+
+        let r_items = translate_value_list_to_vec(items, |item| do_item(item, deps))?;
+
+        Ok(RADT { uniqueness, items: r_items }) 
     }
 }
 
@@ -423,25 +440,40 @@ mod tests {
         let r2 = RADT::from_value(&val, &env).unwrap();
         assert_eq!(r, r2);
     }
+
+    #[test]
+    fn test_label() {
+        let l = LabelSet(vec![
+                 Label {
+                    name: "Option".to_owned(),
+                    item: LabeledItem::Sum(vec![
+                        Label { name: "Some".to_owned(), item: LabeledItem::Type },
+                        Label { name: "None".to_owned(), item: LabeledItem::Product(Vec::new()) },
+                    ]),
+                },
+        ]);
+
+        let _ = LabelSet::radt();
+        let (val, mut deps) = l.to_value();
+        println!("encoded");
+        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
+        let l2 = LabelSet::from_value(&val, &env).unwrap();
+        assert_eq!(l, l2);
+    }
 }
 
-
-/*
-
-impl Bridged for LabelSet {
-    fn type() -> RADT {
-        RADT {
-            uniqueness: b"label-set       ".to_owned(),
+impl Bridged for Label {
+    fn radt() -> (RADT, TypeRef) {
+        let (_,utf8) = String::radt();
+        let r = RADT {
+            uniqueness: b"core:LabelSet---".to_owned(),
             items: vec![
                 // 0: nil
                 RADTItem::Product(Vec::new()),
                 // 1: single label
                 RADTItem::Product(vec![
                     // text label
-                    RADTItem::ExternalType(TypeRef {
-                        definition: utf8hash,
-                        item: 0,
-                    }),
+                    RADTItem::ExternalType(utf8),
                     // item it's labeling. Either a deeper labeling, or nil when
                     // the type bottoms out on an ExternalType
                     RADTItem::CycleRef(6),
@@ -466,35 +498,154 @@ impl Bridged for LabelSet {
                 // 8: item labels
                 RADTItem::Sum(vec![RADTItem::CycleRef(0), RADTItem::CycleRef(7)]),
             ],
-        }
+        };
+        let typing = Typing {
+            kind: RADT_TYPE_REF,
+            data: r.hash(),
+        };
+        (r, TypeRef { definition: typing.hash(), item: 8 })
     }
+    fn to_value(&self) -> (TypedValue, Vec<Item>) {
+        let (_, t) = Self::radt();
+        let mut deps = Vec::new();
 
-    fn to_value(&self) -> Typing {
-        todo!()
-    }
-    fn from_value(v: &RADTValue) -> Self {
-        todo!()
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_to_value() {
-        let l = LabelSet(vec![
-            Label {
-                name: "Option".to_owned(),
-                item: LabeledItem::Sum(vec![
-                            Label { name: "Some".to_owned(), item: LabeledItem::Type },
-                            Label { name: "None".to_owned(), item: LabeledItem::Product(Vec::new()) },
-                ]),
+        let (name, mut name_deps) = self.name.to_value();
+        deps.append(&mut name_deps);
+        let name_val = Item::Value(name);
+        let name_hash = name_val.hash();
+        deps.push(name_val);
+        let item = match &self.item {
+            LabeledItem::Product(field_labels) => {
+                RADTValue::Sum {
+                    kind: 0,
+                    value: Box::new(
+                        translate_vec_to_value_list(field_labels.iter(), |field_label| {
+                            let (v, mut field_deps) = field_label.to_value();
+                            deps.append(&mut field_deps);
+                            v.value
+                        })
+                    ),
+                }
             },
-            Label { name: "That".to_owned(), item: LabeledItem::Type },
-        ]);
+            LabeledItem::Sum(variant_labels) => {
+                RADTValue::Sum {
+                    kind: 1,
+                    value: Box::new(
+                        translate_vec_to_value_list(variant_labels.iter(), |variant_label| {
+                            let (v, mut variant_deps) = variant_label.to_value();
+                            deps.append(&mut variant_deps);
+                            v.value
+                        })
+                    ),
+                }
+            },
+            LabeledItem::Type => {
+                RADTValue::Sum {
+                    kind: 2,
+                    value: Box::new(RADTValue::Product(Vec::new())),
+                }
+            },
+        };
 
-        let expected = 
+        let val = RADTValue::Product(vec![RADTValue::Hash(name_hash), item]);
+        (TypedValue { kind: t, value: val }, deps)
+    }
+    fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
+        let (rad, t) = Self::radt();
+        // FIXME: since we call from_value recursively, this will get called at every node, giving
+        // us n^2 redundant work. Figure out how to call only once at the top level, or to spread
+        // the checking across the whole recursive process.
+        validate_radt_instance(&rad, t.item, &v.value)?;
+        let v = sure!(&v.value, RADTValue::Product(v) => v);
+        assert!(v.len() == 2);
+
+        let name_hash = sure!(&v[0], RADTValue::Hash(h) => h);
+        let name = match deps.get(name_hash) {
+            Some(Item::Value(name_val)) => String::from_value(name_val, deps)?,
+            Some(_) => return Err(MonsterError::BridgedMistypedDependency),
+            None => return Err(MonsterError::BridgedMissingDependency),
+        };
+
+        let item = match &v[1] {
+            RADTValue::Sum{kind: 0, value} => {
+                todo!();
+            },
+            RADTValue::Sum{kind: 1, value} => {todo!()},
+            RADTValue::Sum{kind: 2, value} => {
+                let v = sure!(value.deref(), RADTValue::Product(v) => v);
+                assert!(v.is_empty());
+                LabeledItem::Type
+            },
+            _ => panic!("this shouldn't happen, we already validated against the type"),
+        };
+
+        Ok(Label { name, item })
     }
 }
-*/
+// fn translate_vec_to_value_list<T>(items: impl DoubleEndedIterator<Item=T>, mut f: impl FnMut(T) -> RADTValue)
+// -> RADTValue {
+// fn translate_value_list_to_vec<T>(mut v: &RADTValue, mut f: impl FnMut(&RADTValue) -> Result<T, MonsterError>)
+// -> Result<Vec<T>, MonsterError> {
+
+impl Bridged for LabelSet {
+    fn radt() -> (RADT, TypeRef) {
+        let (_,utf8) = String::radt();
+        let r = RADT {
+            uniqueness: b"core:LabelSet---".to_owned(),
+            items: vec![
+                // 0: nil
+                RADTItem::Product(Vec::new()),
+                // 1: single label
+                RADTItem::Product(vec![
+                    // text label
+                    RADTItem::ExternalType(utf8),
+                    // item it's labeling. Either a deeper labeling, or nil when
+                    // the type bottoms out on an ExternalType
+                    RADTItem::CycleRef(6),
+                ]),
+                // 2: label list cons
+                RADTItem::Product(vec![RADTItem::CycleRef(1), RADTItem::CycleRef(3)]),
+                // 3: label list
+                RADTItem::Sum(vec![RADTItem::CycleRef(0), RADTItem::CycleRef(2)]),
+                // 4: product field labels
+                RADTItem::CycleRef(3),
+                // 5: variant names
+                RADTItem::CycleRef(3),
+                // 6: Single type labeling - product, sum, or nil if it refers to an instance of another
+                // type
+                RADTItem::Sum(vec![
+                    RADTItem::CycleRef(4),
+                    RADTItem::CycleRef(5),
+                    RADTItem::CycleRef(0),
+                ]),
+                // 7: item labelings cons
+                RADTItem::Product(vec![RADTItem::CycleRef(6), RADTItem::CycleRef(8)]),
+                // 8: item labels
+                RADTItem::Sum(vec![RADTItem::CycleRef(0), RADTItem::CycleRef(7)]),
+            ],
+        };
+        let typing = Typing {
+            kind: RADT_TYPE_REF,
+            data: r.hash(),
+        };
+        (r, TypeRef { definition: typing.hash(), item: 1 })
+    }
+    fn to_value(&self) -> (TypedValue, Vec<Item>) {
+        let (_, t) = Self::radt();
+        let mut deps = Vec::new();
+        let val = translate_vec_to_value_list(self.0.iter(), |label| {
+            let (label_val, mut label_deps) = label.to_value();
+            deps.append(&mut label_deps);
+            label_val.value
+        });
+        (TypedValue { kind: t, value: val }, deps)
+    }
+    fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
+        todo!();
+    }
+}
+
+// fn translate_vec_to_value_list<T>(items: impl DoubleEndedIterator<Item=T>, mut f: impl FnMut(T) -> RADTValue)
+// -> RADTValue {
+// fn translate_value_list_to_vec<T>(mut v: &RADTValue, mut f: impl FnMut(&RADTValue) -> Result<T, MonsterError>)
+// -> Result<Vec<T>, MonsterError> {
