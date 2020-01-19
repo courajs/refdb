@@ -455,7 +455,6 @@ mod tests {
 
         let _ = LabelSet::radt();
         let (val, mut deps) = l.to_value();
-        println!("encoded");
         let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
         let l2 = LabelSet::from_value(&val, &env).unwrap();
         assert_eq!(l, l2);
@@ -494,7 +493,7 @@ impl Bridged for Label {
                     RADTItem::CycleRef(0),
                 ]),
                 // 7: item labelings cons
-                RADTItem::Product(vec![RADTItem::CycleRef(6), RADTItem::CycleRef(8)]),
+                RADTItem::Product(vec![RADTItem::CycleRef(1), RADTItem::CycleRef(8)]),
                 // 8: item labels
                 RADTItem::Sum(vec![RADTItem::CycleRef(0), RADTItem::CycleRef(7)]),
             ],
@@ -503,7 +502,7 @@ impl Bridged for Label {
             kind: RADT_TYPE_REF,
             data: r.hash(),
         };
-        (r, TypeRef { definition: typing.hash(), item: 8 })
+        (r, TypeRef { definition: typing.hash(), item: 1 })
     }
     fn to_value(&self) -> (TypedValue, Vec<Item>) {
         let (_, t) = Self::radt();
@@ -568,9 +567,19 @@ impl Bridged for Label {
 
         let item = match &v[1] {
             RADTValue::Sum{kind: 0, value} => {
-                todo!();
+                LabeledItem::Product(
+                    translate_value_list_to_vec(value.deref(), |field_value| {
+                        Label::from_value(&TypedValue{kind: t, value: field_value.clone()}, deps)
+                    })?
+                )
             },
-            RADTValue::Sum{kind: 1, value} => {todo!()},
+            RADTValue::Sum{kind: 1, value} => {
+                LabeledItem::Sum(
+                    translate_value_list_to_vec(value.deref(), |variant_value| {
+                        Label::from_value(&TypedValue{kind: t, value: variant_value.clone()}, deps)
+                    })?
+                )
+            },
             RADTValue::Sum{kind: 2, value} => {
                 let v = sure!(value.deref(), RADTValue::Product(v) => v);
                 assert!(v.is_empty());
@@ -614,12 +623,12 @@ impl Bridged for LabelSet {
                 // 6: Single type labeling - product, sum, or nil if it refers to an instance of another
                 // type
                 RADTItem::Sum(vec![
-                    RADTItem::CycleRef(4),
-                    RADTItem::CycleRef(5),
-                    RADTItem::CycleRef(0),
+                    RADTItem::CycleRef(4), // Product
+                    RADTItem::CycleRef(5), // Sum
+                    RADTItem::CycleRef(0), // Type
                 ]),
                 // 7: item labelings cons
-                RADTItem::Product(vec![RADTItem::CycleRef(6), RADTItem::CycleRef(8)]),
+                RADTItem::Product(vec![RADTItem::CycleRef(1), RADTItem::CycleRef(8)]),
                 // 8: item labels
                 RADTItem::Sum(vec![RADTItem::CycleRef(0), RADTItem::CycleRef(7)]),
             ],
@@ -628,7 +637,7 @@ impl Bridged for LabelSet {
             kind: RADT_TYPE_REF,
             data: r.hash(),
         };
-        (r, TypeRef { definition: typing.hash(), item: 1 })
+        (r, TypeRef { definition: typing.hash(), item: 8 })
     }
     fn to_value(&self) -> (TypedValue, Vec<Item>) {
         let (_, t) = Self::radt();
@@ -641,7 +650,11 @@ impl Bridged for LabelSet {
         (TypedValue { kind: t, value: val }, deps)
     }
     fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
-        todo!();
+        let (rad, t) = Self::radt();
+        validate_radt_instance(&rad, t.item, &v.value)?;
+        translate_value_list_to_vec(&v.value, |label_value| {
+            Label::from_value(&TypedValue{kind: t, value: label_value.clone()}, deps)
+        }).map(|v| LabelSet(v))
     }
 }
 

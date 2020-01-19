@@ -394,8 +394,6 @@ impl RADT {
         sort_mapping.sort_by_cached_key(|i| Hash::of(&self.items[*i].zero_bytes()));
         transpose(&mut sort_mapping);
 
-        // dbg!(&sort_mapping);
-
         let orig = self.items.clone();
         for (i, item) in orig.into_iter().enumerate() {
             self.items[sort_mapping[i]] = item;
