@@ -462,14 +462,36 @@ mod tests {
             variables: vars,
         };
 
-        let _ = Env::radt();
-        let (val, mut deps) = e.to_value();
-        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
-        let e2 = Env::from_value(&val, &env);
-        assert_eq!(e, e2);
+        test_roundtrip(e);
     }
     */
 }
+
+/*
+impl Bridged for Env {
+    fn radt() -> (RADT, TypeRef) {
+        let (_,radt) = RADT::radt();
+        let (_,labeling) = LabelSet::radt();
+        let (_,utf8) = String::radt();
+        let (_,item) = Typing::radt();
+        let r = RADT {
+            uniqueness: b"core:Env--------".to_owned(),
+            items: vec![
+                // 0: nil
+                RADTItem::Product(Vec::new()),
+                // 1: 
+                RADTItem::
+            ]
+        }
+    }
+    fn to_value(&self) -> (TypedValue, Vec<Item>) {
+        todo!();
+    }
+    fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
+        todo!();
+    }
+}
+*/
 
 use crate::eval::*;
 

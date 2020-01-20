@@ -92,8 +92,12 @@ fn process_spec<'a>(spec: &'a TypeSpec, refs: &HashMap<&str, usize>, ex_names: &
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
 pub struct Env {
-    pub names: HashMap<String, TypeRef>,
+    // type -> labeling
+    pub labelings: HashMap<Hash, LabelSet>,
+    // name -> typed value
+    pub variables: HashMap<String, Hash>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
