@@ -385,39 +385,25 @@ mod tests {
 
     #[test]
     fn test_str_roundtrip() {
-        let s = String::from("hello");
-        let (val, mut deps) = s.to_value();
-        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
-        let s2 = String::from_value(&val, &env).unwrap();
-        assert_eq!(s, s2);
+        test_roundtrip(String::from("hello"));
     }
 
     #[test]
     fn test_usize() {
-        let n: usize = 290;
-        let _ = usize::radt();
-        let (val, mut deps) = n.to_value();
-        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
-        let n2 = usize::from_value(&val, &env).unwrap();
-        assert_eq!(n, n2);
+        test_roundtrip(290usize);
     }
 
     #[test]
     fn test_typerefs() {
-        let r = TypeRef {
+        test_roundtrip(TypeRef {
             definition: Hash::of(b"owl"),
             item: 290,
-        };
-        let _ = TypeRef::radt();
-        let (val, mut deps) = r.to_value();
-        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
-        let r2 = TypeRef::from_value(&val, &env).unwrap();
-        assert_eq!(r, r2);
+        });
     }
 
     #[test]
     fn test_radt() {
-        let r = RADT {
+        test_roundtrip(RADT {
             uniqueness: b"blob list-------".to_owned(),
             items: vec![
                 // nil
@@ -433,17 +419,12 @@ mod tests {
                     RADTItem::CycleRef(1),
                 ]),
             ],
-        };
-        let _ = RADT::radt();
-        let (val, mut deps) = r.to_value();
-        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
-        let r2 = RADT::from_value(&val, &env).unwrap();
-        assert_eq!(r, r2);
+        });
     }
 
     #[test]
     fn test_label() {
-        let l = LabelSet(vec![
+        test_roundtrip(LabelSet(vec![
                  Label {
                     name: "Option".to_owned(),
                     item: LabeledItem::Sum(vec![
@@ -451,15 +432,46 @@ mod tests {
                         Label { name: "None".to_owned(), item: LabeledItem::Product(Vec::new()) },
                     ]),
                 },
-        ]);
-
-        let _ = LabelSet::radt();
-        let (val, mut deps) = l.to_value();
-        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
-        let l2 = LabelSet::from_value(&val, &env).unwrap();
-        assert_eq!(l, l2);
+        ]));
     }
+
+    fn test_roundtrip<T: Bridged + Eq + std::fmt::Debug>(input: T) {
+        let _ = T::radt();
+        let (val, mut deps) = input.to_value();
+        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
+        let result = T::from_value(&val, &env).unwrap();
+        assert_eq!(input, result);
+    }
+
+    /*
+    #[test]
+    fn test_env() {
+        let mut types = HashMap::<Hash, LabelSet>::new();
+        types.insert(Hash::of(b"quilt"), LabelSet(vec![
+            Label {
+                name: "Value".to_owned(),
+                item: LabeledItem::Type,
+            },
+        ]));
+
+        let mut vars = HashMap::<String, Hash>::new();
+        vars.insert("bookmarks".to_owned(), Hash::of(b"grog"));
+
+        let e = Env {
+            labelings: types,
+            variables: vars,
+        };
+
+        let _ = Env::radt();
+        let (val, mut deps) = e.to_value();
+        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
+        let e2 = Env::from_value(&val, &env);
+        assert_eq!(e, e2);
+    }
+    */
 }
+
+use crate::eval::*;
 
 impl Bridged for Label {
     fn radt() -> (RADT, TypeRef) {
@@ -505,7 +517,7 @@ impl Bridged for Label {
         (r, TypeRef { definition: typing.hash(), item: 1 })
     }
     fn to_value(&self) -> (TypedValue, Vec<Item>) {
-        let (_, t) = Self::radt();
+        let (rad, t) = Self::radt();
         let mut deps = Vec::new();
 
         let (name, mut name_deps) = self.name.to_value();
@@ -547,6 +559,8 @@ impl Bridged for Label {
         };
 
         let val = RADTValue::Product(vec![RADTValue::Hash(name_hash), item]);
+
+        debug_assert!(validate_radt_instance(&rad, t.item, &val).is_ok(), "Labels should serialize to values properly: {}", validate_radt_instance(&rad, t.item, &val).unwrap_err());
         (TypedValue { kind: t, value: val }, deps)
     }
     fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
@@ -640,13 +654,14 @@ impl Bridged for LabelSet {
         (r, TypeRef { definition: typing.hash(), item: 8 })
     }
     fn to_value(&self) -> (TypedValue, Vec<Item>) {
-        let (_, t) = Self::radt();
+        let (rad, t) = Self::radt();
         let mut deps = Vec::new();
         let val = translate_vec_to_value_list(self.0.iter(), |label| {
             let (label_val, mut label_deps) = label.to_value();
             deps.append(&mut label_deps);
             label_val.value
         });
+        debug_assert!(validate_radt_instance(&rad, t.item, &val).is_ok(), "LabelSets should serialize to values properly: {}", validate_radt_instance(&rad, t.item, &val).unwrap_err());
         (TypedValue { kind: t, value: val }, deps)
     }
     fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
