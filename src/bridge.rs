@@ -284,6 +284,22 @@ impl Bridged for RADT {
     }
 }
 
+// If an iterator has an arbitrary order, (like HashMap entries),
+// it might as well be double-ended.
+struct ArbitraryOrderDoubleEndedIter<I, T: Iterator<Item=I>>(T);
+impl<I, T: Iterator<Item=I>> Iterator for ArbitraryOrderDoubleEndedIter<I, T> {
+    type Item = I;
+    fn next(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+}
+impl<I, T: Iterator<Item=I>> DoubleEndedIterator for ArbitraryOrderDoubleEndedIter<I, T> {
+    fn next_back(&mut self) -> Option<Self::Item> {
+        self.0.next()
+    }
+}
+
+
 fn translate_vec_to_value_list<T>(items: impl DoubleEndedIterator<Item=T>, mut f: impl FnMut(T) -> RADTValue) -> RADTValue {
     items.rfold(RADTValue::Sum { kind: 0, value: Box::new(RADTValue::Product(Vec::new())) }, |acc, item| {
         RADTValue::Sum {
@@ -302,28 +318,17 @@ use std::ops::Deref;
 fn translate_value_list_to_vec<T>(mut v: &RADTValue, mut f: impl FnMut(&RADTValue) -> Result<T, MonsterError>) -> Result<Vec<T>, MonsterError> {
     let mut result = Vec::new();
     while let RADTValue::Sum { kind: 1, value } = v {
-        match value.deref() {
-            RADTValue::Product(fields) => {
-                if fields.len() != 2 {
-                    return Err(MonsterError::BridgedMistypedDependency);
-                }
-                result.push(f(&fields[0])?);
-                v = &fields[1];
-            },
-            _ => return Err(MonsterError::BridgedMistypedDependency)
+        let fields = sure!(value.deref(), RADTValue::Product(f) => f; return Err(MonsterError::BridgedMistypedDependency));
+        if fields.len() != 2 {
+            return Err(MonsterError::BridgedMistypedDependency);
         }
+        result.push(f(&fields[0])?);
+        v = &fields[1];
     }
 
-    if let RADTValue::Sum { kind: 0, value } = v {
-        match value.deref() {
-            RADTValue::Product(v) => {
-                if v.len() != 0 {
-                    return Err(MonsterError::BridgedMistypedDependency);
-                }
-            },
-            _ => return Err(MonsterError::BridgedMistypedDependency)
-        }
-    } else {
+    let value = sure!(v, RADTValue::Sum{kind:0,value:v} => v; return Err(MonsterError::BridgedMistypedDependency));
+    let empty = sure!(value.deref(), RADTValue::Product(v) => v; return Err(MonsterError::BridgedMistypedDependency));
+    if !empty.is_empty() {
         return Err(MonsterError::BridgedMistypedDependency);
     }
 
@@ -443,7 +448,6 @@ mod tests {
         assert_eq!(input, result);
     }
 
-    /*
     #[test]
     fn test_env() {
         let mut types = HashMap::<Hash, LabelSet>::new();
@@ -464,34 +468,138 @@ mod tests {
 
         test_roundtrip(e);
     }
-    */
 }
 
-/*
 impl Bridged for Env {
     fn radt() -> (RADT, TypeRef) {
         let (_,radt) = RADT::radt();
         let (_,labeling) = LabelSet::radt();
         let (_,utf8) = String::radt();
-        let (_,item) = Typing::radt();
         let r = RADT {
             uniqueness: b"core:Env--------".to_owned(),
             items: vec![
                 // 0: nil
                 RADTItem::Product(Vec::new()),
-                // 1: 
-                RADTItem::
-            ]
-        }
+                // 1: labeling entry
+                RADTItem::Product(vec![
+                    RADTItem::ExternalType(radt),
+                    RADTItem::ExternalType(labeling),
+                ]),
+                // 2: labelings cons
+                RADTItem::Product(vec![
+                    RADTItem::CycleRef(1),
+                    RADTItem::CycleRef(3),
+                ]),
+                // 3: labelings list
+                RADTItem::Sum(vec![
+                    RADTItem::CycleRef(0),
+                    RADTItem::CycleRef(2),
+                ]),
+                // 4: variables entry
+                RADTItem::Product(vec![
+                    RADTItem::ExternalType(utf8),
+                    RADTItem::ExternalType(ANY_TYPE_REF),
+                ]),
+                // 5: variables cons
+                RADTItem::Product(vec![
+                    RADTItem::CycleRef(4),
+                    RADTItem::CycleRef(6),
+                ]),
+                // 6: variables list
+                RADTItem::Sum(vec![
+                    RADTItem::CycleRef(0),
+                    RADTItem::CycleRef(5),
+                ]),
+                // 7: Env
+                RADTItem::Product(vec![
+                    RADTItem::CycleRef(3),
+                    RADTItem::CycleRef(6),
+                ]),
+            ],
+        };
+
+        let typing = Typing {
+            kind: RADT_TYPE_REF,
+            data: r.hash(),
+        };
+        (r, TypeRef { definition: typing.hash(), item: 7 })
     }
     fn to_value(&self) -> (TypedValue, Vec<Item>) {
-        todo!();
+        let (rad,t) = Self::radt();
+        let mut deps = Vec::new();
+        let labels = translate_vec_to_value_list(ArbitraryOrderDoubleEndedIter(self.labelings.iter()), |(type_hash, labels)| {
+            let (label_typed, mut label_deps) = labels.to_value();
+            let label_item = Item::Value(label_typed);
+            let label_hash = label_item.hash();
+            deps.append(&mut label_deps);
+            deps.push(label_item);
+            RADTValue::Product(vec![
+                RADTValue::Hash(*type_hash),
+                RADTValue::Hash(label_hash),
+            ])
+        });
+        let vars = translate_vec_to_value_list(ArbitraryOrderDoubleEndedIter(self.variables.iter()), |(name, value_hash)| {
+            let (name_typed, mut name_deps) = name.to_value();
+            let name_item = Item::Value(name_typed);
+            let name_hash = name_item.hash();
+            deps.append(&mut name_deps);
+            deps.push(name_item);
+            RADTValue::Product(vec![
+                RADTValue::Hash(name_hash),
+                RADTValue::Hash(*value_hash),
+            ])
+        });
+        let val = RADTValue::Product(vec![
+            labels, vars
+        ]);
+        debug_assert!(validate_radt_instance(&rad, t.item, &val).is_ok(), "Env should serialize to RADTValue properly: {}", validate_radt_instance(&rad, t.item, &val).unwrap_err());
+        (TypedValue { kind: t, value: val}, deps)
     }
     fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
         todo!();
+        /*
+        let (rad, t) = Self::radt();
+        // FIXME: since we call from_value recursively, this will get called at every node, giving
+        // us n^2 redundant work. Figure out how to call only once at the top level, or to spread
+        // the checking across the whole recursive process.
+        validate_radt_instance(&rad, t.item, &v.value)?;
+        let v = sure!(&v.value, RADTValue::Product(v) => v);
+        assert!(v.len() == 2);
+
+        let name_hash = sure!(&v[0], RADTValue::Hash(h) => h);
+        let name = match deps.get(name_hash) {
+            Some(Item::Value(name_val)) => String::from_value(name_val, deps)?,
+            Some(_) => return Err(MonsterError::BridgedMistypedDependency),
+            None => return Err(MonsterError::BridgedMissingDependency),
+        };
+
+        let item = match &v[1] {
+            RADTValue::Sum{kind: 0, value} => {
+                LabeledItem::Product(
+                    translate_value_list_to_vec(value.deref(), |field_value| {
+                        Label::from_value(&TypedValue{kind: t, value: field_value.clone()}, deps)
+                    })?
+                )
+            },
+            RADTValue::Sum{kind: 1, value} => {
+                LabeledItem::Sum(
+                    translate_value_list_to_vec(value.deref(), |variant_value| {
+                        Label::from_value(&TypedValue{kind: t, value: variant_value.clone()}, deps)
+                    })?
+                )
+            },
+            RADTValue::Sum{kind: 2, value} => {
+                let v = sure!(value.deref(), RADTValue::Product(v) => v);
+                assert!(v.is_empty());
+                LabeledItem::Type
+            },
+            _ => panic!("this shouldn't happen, we already validated against the type"),
+        };
+
+        Ok(Label { name, item })
+        */
     }
 }
-*/
 
 use crate::eval::*;
 

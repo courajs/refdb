@@ -20,6 +20,9 @@ pub const BLOB_TYPE_HASH: Hash = Hash(hex!(
 pub const RADT_TYPE_HASH: Hash = Hash(hex!(
     "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000001"
 ));
+pub const ANY_TYPE_HASH: Hash = Hash(hex!(
+    "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000002"
+));
 
 pub const BLOB_TYPE_REF: TypeRef = TypeRef {
     definition: BLOB_TYPE_HASH,
@@ -27,6 +30,10 @@ pub const BLOB_TYPE_REF: TypeRef = TypeRef {
 };
 pub const RADT_TYPE_REF: TypeRef = TypeRef {
     definition: RADT_TYPE_HASH,
+    item: 0,
+};
+pub const ANY_TYPE_REF: TypeRef = TypeRef {
+    definition: ANY_TYPE_HASH,
     item: 0,
 };
 

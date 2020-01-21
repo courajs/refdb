@@ -212,7 +212,7 @@ impl<'a> Db<'a> {
                     Err(MonsterError::UntypedReference(expected.reference))?;
                 }
                 Ok((_, LiteralItem::Typing(typing))) => {
-                    if typing.kind != expected.kind {
+                    if typing.kind != expected.kind && expected.kind != ANY_TYPE_REF {
                         Err(MonsterError::MistypedReference {
                             reference: expected.reference,
                             expected_type: expected.kind,
