@@ -541,8 +541,6 @@ impl Bridged for Env {
         (TypedValue { kind: t, value: val}, deps)
     }
     fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
-        todo!();
-        /*
         let (rad, t) = Self::radt();
         // FIXME: since we call from_value recursively, this will get called at every node, giving
         // us n^2 redundant work. Figure out how to call only once at the top level, or to spread
@@ -551,38 +549,41 @@ impl Bridged for Env {
         let v = sure!(&v.value, RADTValue::Product(v) => v);
         assert!(v.len() == 2);
 
-        let name_hash = sure!(&v[0], RADTValue::Hash(h) => h);
-        let name = match deps.get(name_hash) {
-            Some(Item::Value(name_val)) => String::from_value(name_val, deps)?,
-            Some(_) => return Err(MonsterError::BridgedMistypedDependency),
-            None => return Err(MonsterError::BridgedMissingDependency),
-        };
+        let (_, label_type) = LabelSet::radt();
+        let (_, string_type) = String::radt();
 
-        let item = match &v[1] {
-            RADTValue::Sum{kind: 0, value} => {
-                LabeledItem::Product(
-                    translate_value_list_to_vec(value.deref(), |field_value| {
-                        Label::from_value(&TypedValue{kind: t, value: field_value.clone()}, deps)
-                    })?
-                )
-            },
-            RADTValue::Sum{kind: 1, value} => {
-                LabeledItem::Sum(
-                    translate_value_list_to_vec(value.deref(), |variant_value| {
-                        Label::from_value(&TypedValue{kind: t, value: variant_value.clone()}, deps)
-                    })?
-                )
-            },
-            RADTValue::Sum{kind: 2, value} => {
-                let v = sure!(value.deref(), RADTValue::Product(v) => v);
-                assert!(v.is_empty());
-                LabeledItem::Type
-            },
-            _ => panic!("this shouldn't happen, we already validated against the type"),
-        };
+        let labelings = translate_value_list_to_vec(&v[0], |labeling| {
+            let pair = sure!(labeling, RADTValue::Product(v) => v);
+            let type_hash = sure!(&pair[0], RADTValue::Hash(h) => *h);
+            let label_hash = sure!(&pair[1], RADTValue::Hash(h) => h);
+            let label_typed = match deps.get(label_hash) {
+                Some(Item::Value(tv)) => tv,
+                Some(_) => return Err(MonsterError::BridgedMistypedDependency),
+                None => return Err(MonsterError::BridgedMissingDependency),
+            };
+            if label_typed.kind != label_type {
+                return Err(MonsterError::BridgedMistypedDependency);
+            }
+            let label = LabelSet::from_value(&label_typed, deps)?;
+            Ok((type_hash, label))
+        })?.into_iter().collect();
+        let variables = translate_value_list_to_vec(&v[1], |var_def| {
+            let pair = sure!(var_def, RADTValue::Product(v) => v);
+            let name_hash = sure!(&pair[0], RADTValue::Hash(h) => h);
+            let value_hash = sure!(&pair[1], RADTValue::Hash(h) => *h);
+            let name_typed = match deps.get(name_hash) {
+                Some(Item::Value(tv)) => tv,
+                Some(_) => return Err(MonsterError::BridgedMistypedDependency),
+                None => return Err(MonsterError::BridgedMissingDependency),
+            };
+            if name_typed.kind != string_type {
+                return Err(MonsterError::BridgedMistypedDependency);
+            }
+            let name = String::from_value(&name_typed, deps)?;
+            Ok((name, value_hash))
+        })?.into_iter().collect();
 
-        Ok(Label { name, item })
-        */
+        Ok(Env { labelings, variables })
     }
 }
 
