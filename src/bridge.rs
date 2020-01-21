@@ -44,10 +44,7 @@ impl Bridged for String {
             return Err(MonsterError::BridgedMistypedDependency)
         }
         validate_radt_instance(&rad, t.item, &v.value)?;
-        let body = match v.value {
-            RADTValue::Hash(h) => h,
-            _ => return Err(MonsterError::BridgedMistypedDependency),
-        };
+        let body = sure!(v.value, RADTValue::Hash(h) => h; return Err(MonsterError::BridgedMistypedDependency));
         let bytes = match deps.get(&body) {
             Some(Item::Blob(b)) => b.bytes.clone(),
             None => return Err(MonsterError::BridgedMissingDependency),
@@ -98,18 +95,9 @@ impl Bridged for TypeRef {
             return Err(MonsterError::BridgedMistypedDependency)
         }
         validate_radt_instance(&rad, t.item, &v.value)?;
-        let fields = match &v.value {
-            RADTValue::Product(fields) => fields,
-            _ => return Err(MonsterError::BridgedMistypedDependency),
-        };
-        let definition = match fields[0] {
-            RADTValue::Hash(h) => h,
-            _ => return Err(MonsterError::BridgedMistypedDependency),
-        };
-        let item_hash = match fields[1] {
-            RADTValue::Hash(h) => h,
-            _ => return Err(MonsterError::BridgedMistypedDependency),
-        };
+        let fields = sure!(&v.value, RADTValue::Product(f) => f; return Err(MonsterError::BridgedMistypedDependency));
+        let definition = sure!(fields[0], RADTValue::Hash(h) => h; return Err(MonsterError::BridgedMistypedDependency));
+        let item_hash = sure!(fields[1], RADTValue::Hash(h) => h; return Err(MonsterError::BridgedMistypedDependency));
         let u_size = match deps.get(&item_hash) {
             Some(Item::Value(u_size)) => u_size,
             None => return Err(MonsterError::BridgedMissingDependency),
@@ -367,10 +355,7 @@ impl Bridged for usize {
             return Err(MonsterError::BridgedMistypedDependency)
         }
         validate_radt_instance(&rad, t.item, &v.value)?;
-        let body = match v.value {
-            RADTValue::Hash(h) => h,
-            _ => return Err(MonsterError::BridgedMistypedDependency),
-        };
+        let body = sure!(v.value, RADTValue::Hash(h) => h; return Err(MonsterError::BridgedMistypedDependency));
         let bytes = match deps.get(&body) {
             Some(Item::Blob(b)) => b.bytes.clone(),
             None => return Err(MonsterError::BridgedMissingDependency),
