@@ -9,7 +9,7 @@ use nom::{
         alphanumeric0, anychar, char, one_of, none_of,
     },
     combinator::{
-        not, map,
+        not, map, all_consuming,
     },
     multi::many1,
 };
@@ -225,8 +225,8 @@ fn squishy<I,O,E>(f: impl Fn(I) -> IResult<I,O,E>) -> impl Fn(I) -> IResult<I,O,
 use nom::combinator::opt;
 
 
-fn parse_statements(input: &str) -> IResult<&str, Vec<TypeDef>, VerboseError<&str>> {
-    delimited(
+pub fn parse_statements(input: &str) -> IResult<&str, Vec<TypeDef>, VerboseError<&str>> {
+    all_consuming(delimited(
         multispace0,
         separated_list(
             squishy(char(';')),
@@ -241,6 +241,6 @@ fn parse_statements(input: &str) -> IResult<&str, Vec<TypeDef>, VerboseError<&st
                     
         ),
         squishy(opt(char(';'))),
-    )
+    ))
     (input)
 }

@@ -5,6 +5,10 @@ use rkv::Value;
 use crate::core::*;
 use crate::error::MonsterError;
 use crate::types::*;
+use crate::bridge::Bridged;
+
+use std::collections::HashMap;
+use std::ops::Deref;
 
 impl Storable for RADTValue {
     const PREFIX: u8 = 0;
@@ -55,7 +59,7 @@ impl Item {
         match self {
             Item::Blob(b) => b.hash(),
             Item::BlobRef(h) => (Typing { kind: BLOB_TYPE_REF, data: *h }).hash(),
-            Item::TypeDef(t) => t.hash(),
+            Item::TypeDef(t) => (Typing { kind: RADT_TYPE_REF, data: t.hash() }).hash(),
             Item::Value(val) => {
                 let h = val.value.hash();
                 return (Typing { kind: val.kind, data: h }).hash()
@@ -85,6 +89,8 @@ pub fn typing_from_typed_val(v: &TypedValue) -> Typing {
         data: v.value.hash(),
     }
 }
+
+use crate::eval::Env;
 
 impl<'a> Db<'a> {
     pub fn put(&self, item: &impl Storable) -> Result<Hash, MonsterError> {
@@ -125,6 +131,132 @@ impl<'a> Db<'a> {
             Some(Value::Blob(bytes)) => Ok(bytes.into()),
             Some(_) => Err(MonsterError::NonBlob(hash)),
             None => Err(MonsterError::NotFound(hash)),
+        }
+    }
+
+    pub fn update_default_env_hash(&self, h: Hash) -> Result<(), MonsterError> {
+        let mut writer = self.env.write().unwrap();
+        self.store.put(&mut writer, "default_env", &Value::Blob(&h.0[..]))
+            .map_err(|e| MonsterError::RkvError(e))?;
+
+        writer.commit().map_err(|e| MonsterError::RkvError(e))
+    }
+
+    pub fn update_default_env(&self, env: &Env) -> Result<(), MonsterError> {
+        let (env_value, env_deps) = env.to_value();
+
+        for item in env_deps {
+            self.put_item(&item)?;
+        }
+        let env_hash = self.put_item(&Item::Value(env_value))?;
+
+        println!("New environment hash is {}:\n{:?}", env_hash, env);
+        self.update_default_env_hash(env_hash)
+    }
+
+    pub fn get_default_env(&self) -> Result<Option<Env>, MonsterError> {
+        let h = self.get_default_env_hash()?;
+        println!("h {:?}", h);
+        if let None = h {
+            return Ok(None);
+        }
+        let hash = h.unwrap();
+        println!("Getting environment ({})", hash);
+        self.get_env(hash)
+    }
+
+    pub fn get_env(&self, h: Hash) -> Result<Option<Env>, MonsterError> {
+
+        fn string_hashes_for_label(v: &RADTValue, string_hashes: &mut Vec<Hash>) {
+            let fields = sure!(v, RADTValue::Product(fields) => fields);
+            string_hashes.push(sure!(&fields[0], RADTValue::Hash(h) => *h));
+            match &fields[1] {
+                RADTValue::Sum{kind:0,value} | RADTValue::Sum{kind:1,value} => {
+                    let mut sub_labels = value.deref();
+                    while let RADTValue::Sum{kind:1,value} = sub_labels {
+                        let cons = sure!(value.deref(), RADTValue::Product(v) => v);
+                        string_hashes_for_label(&cons[0], string_hashes);
+                        sub_labels = &cons[1];
+                    }
+                },
+                _ => {}
+            }
+        }
+
+        let stored = self.get(h)?;
+        let typed = sure!(stored, Item::Value(v) => v; return Err(MonsterError::Todo("env wasn't a value")));
+        let (rad, env_typeref) = Env::radt();
+        if typed.kind != env_typeref {
+            return Err(MonsterError::Todo("Tried to get_env a non-env"));
+        }
+        println!("hey");
+
+        let mut deps: HashMap<Hash, Item> = HashMap::new();
+        // already verified as it was constructed from bytes by .get()
+
+        let both = sure!(&typed.value, RADTValue::Product(v) => v);
+        let [mut labels, mut vars] = sure!(&both[..], [a,b]);
+
+        let mut labelset_hashes = Vec::<Hash>::new();
+        while let RADTValue::Sum{kind:1, value} = labels {
+            let cons = sure!(value.deref(), RADTValue::Product(v) => v);
+            labels = &cons[1];
+
+            let entry = sure!(&cons[0], RADTValue::Product(v) => v);
+            let label_hash = sure!(&entry[1], RADTValue::Hash(h) => *h);
+            labelset_hashes.push(label_hash);
+        }
+
+
+        let mut string_hashes = Vec::<Hash>::new();
+        for h in labelset_hashes {
+            let labelset = sure!(self.get(h)?, Item::Value(TypedValue{value,..}) => value);
+            let mut label_pointer = &labelset;
+            while let RADTValue::Sum{kind:1, value} = label_pointer {
+                let cons = sure!(value.deref(), RADTValue::Product(v) => v);
+                label_pointer = &cons[1];
+
+                string_hashes_for_label(&cons[0], &mut string_hashes);
+            }
+        }
+
+        while let RADTValue::Sum{kind:1, value} = vars {
+            let cons = sure!(value.deref(), RADTValue::Product(v) => v);
+            vars = &cons[1];
+
+            let entry = sure!(&cons[0], RADTValue::Product(v) => v);
+            let name_hash = sure!(&entry[0], RADTValue::Hash(h) => *h);
+            string_hashes.push(name_hash);
+        }
+
+        let mut string_body_hashes = Vec::new();
+        for h in string_hashes {
+            let s = self.get(h)?;
+            string_body_hashes.push(sure!(&s, Item::Value(TypedValue{value: RADTValue::Hash(h2), ..}) => *h2));
+            deps.insert(h, s);
+        }
+
+        for h in string_body_hashes {
+            let body = self.get(h)?;
+            deps.insert(h, body);
+        }
+
+        Env::from_value(&typed, &deps).map(|e| Some(e))
+    }
+
+    pub fn get_default_env_hash(&self) -> Result<Option<Hash>, MonsterError> {
+        let reader = self.env.read().expect("reader");
+        let r = self.store.get(&reader, "default_env").map_err(|e| MonsterError::RkvError(e))?;
+        match r {
+            Some(Value::Blob(bytes)) => {
+                if bytes.len() == 32 {
+                    Ok(Some(Hash::sure_from(bytes)))
+                } else {
+                    Err(MonsterError::Todo("non-hash bytes in default_env slot"))
+                }
+            },
+            Some(_) => Err(MonsterError::Todo("default_env pointed to non-blob")),
+            None => Ok(None),
         }
     }
 

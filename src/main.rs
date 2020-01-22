@@ -1,6 +1,7 @@
 #![allow(unused_mut, dead_code, unused_variables, unused_imports)]
 
 use std::path::Path;
+use std::collections::HashMap;
 
 use failure::Error;
 use failure::bail;
@@ -23,6 +24,9 @@ use crate::storage::*;
 use crate::types::*;
 use crate::bridge::Bridged;
 use crate::error::MonsterError;
+use crate::eval::Env;
+
+use std::ops::Deref;
 
 fn run_app() -> Result<(), Error> {
 
@@ -34,8 +38,8 @@ fn run_app() -> Result<(), Error> {
     if args.len() <= 2 {
         bail!("provide an argument!")
     }
-    if !(args[1] == "store" || args[1] == "fetch") {
-        bail!("commands are \"store\" and \"fetch\"")
+    if !(args[1] == "store_string" || args[1] == "fetch_string" || args[1] == "store") {
+        bail!("commands are \"store\", \"store_string\" and \"fetch_string\"")
     }
 
     let arc = Manager::singleton()
@@ -51,17 +55,67 @@ fn run_app() -> Result<(), Error> {
         store: &store,
     };
 
-    let (rad, stringtype) = String::radt();
-    db.put_item(&Item::TypeDef(rad))?;
+    let (string_rad, stringtype) = String::radt();
+    db.put_item(&Item::TypeDef(string_rad.clone()))?;
+    let (labels_rad, labeltype) = LabelSet::radt();
+    db.put_item(&Item::TypeDef(labels_rad.clone()))?;
+    let (env_rad, _) = Env::radt();
+    db.put_item(&Item::TypeDef(env_rad.clone()))?;
 
     if args[1] == "store" {
+        let input = args[2].deref();
+        let defs = match lang::parse_statements(input) {
+            Err(e) => {
+                bail!("Error parsing input: {:?}", e);
+            },
+            Ok((_,defs)) => defs,
+        };
+        let almost = eval::definitions(&defs)?;
+
+        let mut env = db.get_default_env()?.unwrap_or_else(|| {
+            let mut labelings = HashMap::new();
+            labelings.insert(Item::TypeDef(string_rad).hash(), LabelSet(vec![
+                    Label {
+                        name: "String".to_owned(),
+                        item: LabeledItem::Type,
+                    },
+            ]));
+            Env { labelings, variables: HashMap::new() }
+        });
+
+        dbg!(&env);
+
+        let existing_names = env.defined_names();
+
+        let dups: Vec<&str> = almost.defined_names().into_iter().filter(|n| existing_names.contains(n)).collect();
+
+        if dups.len() > 0 {
+            bail!("The following names are already defined: {:?}", dups);
+        }
+
+        let new_defs = almost.resolve(&env.name_resolutions(), &HashMap::new());
+        // dbg!(&new_defs);
+
+        let new_label = new_defs.labels;
+        let new_rad = RADT {
+            uniqueness: rand::random(),
+            items: new_defs.types,
+        };
+        
+        let new_hash = db.put_item(&Item::TypeDef(new_rad))?;
+
+        env.labelings.insert(new_hash, new_label);
+        db.update_default_env(&env)?;
+    }
+
+    if args[1] == "store_string" {
         let (val, deps) = args[2].to_value();
         for i in deps { db.put_item(&i)?; }
         let h = db.put_item(&Item::Value(val))?;
         println!("{:?}", h);
     }
 
-    if args[1] == "fetch" {
+    if args[1] == "fetch_string" {
         let bytes = match hex::decode(&args[2]) {
             Err(e) => {
                 return Err(MonsterError::Todo("bad hex"))?
@@ -88,80 +142,3 @@ fn main() {
         }
     }
 }
-
-
-
-    /*
-    let blob1 = Blob {
-        bytes: b"abc"[..].into(),
-    };
-    let blob2 = Blob {
-        bytes: b"xyz"[..].into(),
-    };
-
-    let ref1 = Typing {
-        kind: TypeRef {
-            definition: BLOB_TYPE_HASH,
-            item: 0,
-        },
-        data: blob1.hash(),
-    };
-    let ref2 = Typing {
-        kind: TypeRef {
-            definition: BLOB_TYPE_HASH,
-            item: 0,
-        },
-        data: blob2.hash(),
-    };
-
-    let mut uniq = [0; 16];
-    uniq[0] = 254;
-    uniq[15] = 239;
-    let double_ref_type = RADT {
-        uniqueness: uniq,
-        items: vec![RADTItem::Product(vec![
-            RADTItem::ExternalType(TypeRef {
-                definition: BLOB_TYPE_HASH,
-                item: 0,
-            }),
-            RADTItem::ExternalType(TypeRef {
-                definition: BLOB_TYPE_HASH,
-                item: 0,
-            }),
-        ])],
-    };
-
-    let double_ref_typedef = Typing {
-        kind: TypeRef {
-            definition: RADT_TYPE_HASH,
-            item: 0,
-        },
-        data: double_ref_type.hash(),
-    };
-
-    db.put(&blob1)?;
-    db.put(&blob2)?;
-    db.put(&ref1)?;
-    db.put(&ref2)?;
-    db.put(&double_ref_type)?;
-    db.put(&double_ref_typedef)?;
-
-    let instance = RADTValue::Product(vec![
-        RADTValue::Hash(ref1.hash()),
-        RADTValue::Hash(ref2.hash()),
-    ]);
-
-    let confirmations = validate_radt_instance(&double_ref_type, 0, &instance)?;
-    db.confirm_typings(&confirmations)?;
-
-    let typing = Typing {
-        kind: TypeRef {
-            definition: double_ref_typedef.hash(),
-            item: 0,
-        },
-        data: instance.hash(),
-    };
-
-    db.put(&instance)?;
-    db.put(&typing)?;
-    */

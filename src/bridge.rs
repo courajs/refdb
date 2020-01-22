@@ -47,7 +47,7 @@ impl Bridged for String {
         let body = sure!(v.value, RADTValue::Hash(h) => h; return Err(MonsterError::BridgedMistypedDependency));
         let bytes = match deps.get(&body) {
             Some(Item::Blob(b)) => b.bytes.clone(),
-            None => return Err(MonsterError::BridgedMissingDependency),
+            None => return Err(MonsterError::BridgedMissingDependency("string bytes")),
             _ => return Err(MonsterError::BridgedMistypedDependency),
         };
         String::from_utf8(bytes).map_err(|e| MonsterError::BridgedMistypedDependency)
@@ -100,7 +100,7 @@ impl Bridged for TypeRef {
         let item_hash = sure!(fields[1], RADTValue::Hash(h) => h; return Err(MonsterError::BridgedMistypedDependency));
         let u_size = match deps.get(&item_hash) {
             Some(Item::Value(u_size)) => u_size,
-            None => return Err(MonsterError::BridgedMissingDependency),
+            None => return Err(MonsterError::BridgedMissingDependency("typeref item number")),
             _ => return Err(MonsterError::BridgedMistypedDependency),
         };
 
@@ -231,7 +231,7 @@ impl Bridged for RADT {
                 }
             },
             Some(_) => return Err(MonsterError::BridgedMistypedDependency),
-            None => return Err(MonsterError::BridgedMissingDependency),
+            None => return Err(MonsterError::BridgedMissingDependency("radt uniqueness bytes")),
         };
 
         fn do_item(item: &RADTValue, deps: &HashMap<Hash, Item>) -> Result<RADTItem, MonsterError> {
@@ -242,7 +242,7 @@ impl Bridged for RADT {
                     match deps.get(h) {
                         Some(Item::Value(tr)) => Ok(RADTItem::ExternalType(TypeRef::from_value(tr, deps)?)),
                         Some(_) => Err(MonsterError::BridgedMistypedDependency),
-                        None => Err(MonsterError::BridgedMissingDependency),
+                        None => Err(MonsterError::BridgedMissingDependency("a radt's ExternalType's TypeRef")),
                     }
                 },
                 // Sum
@@ -259,7 +259,7 @@ impl Bridged for RADT {
                     match deps.get(h) {
                         Some(Item::Value(tr)) => Ok(RADTItem::CycleRef(usize::from_value(tr, deps)?)),
                         Some(_) => Err(MonsterError::BridgedMistypedDependency),
-                        None => Err(MonsterError::BridgedMissingDependency),
+                        None => Err(MonsterError::BridgedMissingDependency("a radt's CycleRef's item number")),
                     }
                 },
                 _ => panic!("It validated, this shouldn't happen")
@@ -358,7 +358,7 @@ impl Bridged for usize {
         let body = sure!(v.value, RADTValue::Hash(h) => h; return Err(MonsterError::BridgedMistypedDependency));
         let bytes = match deps.get(&body) {
             Some(Item::Blob(b)) => b.bytes.clone(),
-            None => return Err(MonsterError::BridgedMissingDependency),
+            None => return Err(MonsterError::BridgedMissingDependency("a usize's bytes")),
             _ => return Err(MonsterError::BridgedMistypedDependency),
         };
         assert!(bytes.len() == 8, "Only 64-bit numbers can be decoded");
@@ -559,7 +559,7 @@ impl Bridged for Env {
             let label_typed = match deps.get(label_hash) {
                 Some(Item::Value(tv)) => tv,
                 Some(_) => return Err(MonsterError::BridgedMistypedDependency),
-                None => return Err(MonsterError::BridgedMissingDependency),
+                None => return Err(MonsterError::BridgedMissingDependency("a labelset in an Env")),
             };
             if label_typed.kind != label_type {
                 return Err(MonsterError::BridgedMistypedDependency);
@@ -574,7 +574,7 @@ impl Bridged for Env {
             let name_typed = match deps.get(name_hash) {
                 Some(Item::Value(tv)) => tv,
                 Some(_) => return Err(MonsterError::BridgedMistypedDependency),
-                None => return Err(MonsterError::BridgedMissingDependency),
+                None => return Err(MonsterError::BridgedMissingDependency("the name string for an Env variable")),
             };
             if name_typed.kind != string_type {
                 return Err(MonsterError::BridgedMistypedDependency);
@@ -692,7 +692,7 @@ impl Bridged for Label {
         let name = match deps.get(name_hash) {
             Some(Item::Value(name_val)) => String::from_value(name_val, deps)?,
             Some(_) => return Err(MonsterError::BridgedMistypedDependency),
-            None => return Err(MonsterError::BridgedMissingDependency),
+            None => return Err(MonsterError::BridgedMissingDependency("the name string for a label")),
         };
 
         let item = match &v[1] {

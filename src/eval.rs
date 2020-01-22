@@ -100,6 +100,36 @@ pub struct Env {
     pub variables: HashMap<String, Hash>,
 }
 
+use std::ops::Deref;
+impl Env {
+    pub fn defined_names(&self) -> HashSet<&str> {
+        let mut names = HashSet::new();
+        for set in self.labelings.values() {
+            for label in set.0.iter() {
+                names.insert(label.name.deref());
+            }
+        }
+
+        for var in self.variables.keys() {
+            names.insert(var);
+        }
+        names
+    }
+
+    pub fn name_resolutions(&self) -> HashMap<&str, TypeRef> {
+        let mut result = HashMap::new();
+        for (radt_hash,label_set) in self.labelings.iter() {
+            for (i,label) in label_set.0.iter().enumerate() {
+                result.insert(label.name.deref(), TypeRef {
+                    definition: *radt_hash,
+                    item: i,
+                });
+            }
+        }
+        result
+    }
+}
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct AlmostLabeledTypeDefinitions<'a>{
     pub names: Vec<&'a str>,
@@ -166,8 +196,8 @@ fn resolve_item(item: &PendingItem, names: &HashMap<&str, TypeRef>, prefixes: &H
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Definitions {
-    types: Vec<RADTItem>,
-    labels: LabelSet,
+    pub types: Vec<RADTItem>,
+    pub labels: LabelSet,
 }
 
 // #[derive(Debug, PartialEq, Eq)]
