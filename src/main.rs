@@ -83,7 +83,6 @@ fn run_app() -> Result<(), Error> {
             Env { labelings, variables: HashMap::new() }
         });
 
-        dbg!(&env);
 
         let existing_names = env.defined_names();
 
@@ -94,7 +93,6 @@ fn run_app() -> Result<(), Error> {
         }
 
         let new_defs = almost.resolve(&env.name_resolutions(), &HashMap::new());
-        // dbg!(&new_defs);
 
         let new_label = new_defs.labels;
         let new_rad = RADT {

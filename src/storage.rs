@@ -210,14 +210,15 @@ impl<'a> Db<'a> {
 
         let mut string_hashes = Vec::<Hash>::new();
         for h in labelset_hashes {
-            let labelset = sure!(self.get(h)?, Item::Value(TypedValue{value,..}) => value);
-            let mut label_pointer = &labelset;
+            let labelset = self.get(h)?;
+            let mut label_pointer = sure!(&labelset, Item::Value(TypedValue{value,..}) => value);
             while let RADTValue::Sum{kind:1, value} = label_pointer {
                 let cons = sure!(value.deref(), RADTValue::Product(v) => v);
                 label_pointer = &cons[1];
 
                 string_hashes_for_label(&cons[0], &mut string_hashes);
             }
+            deps.insert(h, labelset);
         }
 
         while let RADTValue::Sum{kind:1, value} = vars {
