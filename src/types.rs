@@ -190,6 +190,59 @@ pub enum RADTItem {
     CycleRef(usize),
 }
 
+impl fmt::Display for RADT {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if let Ok(s) = String::from_utf8(self.uniqueness.to_vec()) {
+            write!(f, "{}\n", s)?;
+        } else {
+            write!(f, "0x")?;
+            for c in self.uniqueness.iter() {
+                write!(f, "{:02x}", c)?;
+            }
+            write!(f, "\n")?;
+        }
+        for (i, item) in self.items.iter().enumerate() {
+            write!(f, "{}: {}\n", i, item)?;
+        }
+        Ok(())
+    }
+}
+
+impl fmt::Display for RADTItem {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::ExternalType(tr) => write!(f, "{}", tr),
+            Self::CycleRef(i) => write!(f, ":{}", i),
+            Self::Sum(vars) => {
+                let mut first = true;
+                write!(f, "(")?;
+                for var in vars.iter() {
+                    if first {
+                        first = false;
+                    } else {
+                        write!(f, " | ")?;
+                    }
+                    var.fmt(f)?;
+                }
+                write!(f, ")")
+            },
+            Self::Product(vars) => {
+                let mut first = true;
+                write!(f, "{{")?;
+                for var in vars.iter() {
+                    if first {
+                        first = false;
+                    } else {
+                        write!(f, ", ")?;
+                    }
+                    var.fmt(f)?;
+                }
+                write!(f, "}}")
+            }
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub enum RADTValue {
     Hash(Hash),
