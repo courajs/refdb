@@ -48,7 +48,7 @@ fn run_app() -> Result<(), Error> {
         .get_or_create(Path::new("/Users/aaron/dev/rf0/data"), Rkv::new)
         .unwrap();
     let env = arc.read().unwrap();
-    let store: SingleStore = env.open_single("mydb", StoreOptions::create()).unwrap();
+    let store: SingleStore = env.open_single("main", StoreOptions::create()).unwrap();
 
     let db = Db {
         env: &env,

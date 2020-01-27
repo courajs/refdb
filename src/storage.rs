@@ -99,8 +99,22 @@ impl Iterator for TypingIter<'_> {
     type Item = Typing;
     fn next(&mut self) -> Option<Typing> {
         let kv = self._iter.next()?;
-        let val = kv.unwrap().1.unwrap();
+        let (key, _val) = kv.unwrap();
+        let val = _val.unwrap();
         if let Value::Blob(bytes) = val {
+            // match decode_item(bytes) {
+            //     Ok((more, literal)) => {
+            //         if let LiteralItem::Typing(t) = literal {
+            //             return Some(t);
+            //         } else {
+            //             return self.next();
+            //         }
+            //     },
+            //     Err(e) => {
+            //         eprintln!("e,k,v\n{:?}\n{:?}\n{:?}", e, key, val);
+            //         panic!();
+            //     }
+            // }
             let thing = decode_item(bytes).unwrap().1;
             if let LiteralItem::Typing(t) = thing {
                 return Some(t);
@@ -168,8 +182,9 @@ impl<'a> Db<'a> {
     }
 
     pub fn update_default_env_hash(&self, h: Hash) -> Result<(), MonsterError> {
+        let store = self.env.open_single("meta", rkv::StoreOptions::create()).unwrap();
         let mut writer = self.env.write().unwrap();
-        self.store.put(&mut writer, "default_env", &Value::Blob(&h.0[..]))
+        store.put(&mut writer, "default_env", &Value::Blob(&h.0[..]))
             .map_err(|e| MonsterError::RkvError(e))?;
 
         writer.commit().map_err(|e| MonsterError::RkvError(e))
@@ -279,8 +294,9 @@ impl<'a> Db<'a> {
     }
 
     pub fn get_default_env_hash(&self) -> Result<Option<Hash>, MonsterError> {
+        let store = self.env.open_single("meta", rkv::StoreOptions::create()).unwrap();
         let reader = self.env.read().expect("reader");
-        let r = self.store.get(&reader, "default_env").map_err(|e| MonsterError::RkvError(e))?;
+        let r = store.get(&reader, "default_env").map_err(|e| MonsterError::RkvError(e))?;
         match r {
             Some(Value::Blob(bytes)) => {
                 if bytes.len() == 32 {
