@@ -92,7 +92,40 @@ pub fn typing_from_typed_val(v: &TypedValue) -> Typing {
 
 use crate::eval::Env;
 
+pub struct TypingIter<'a> {
+    _iter: rkv::store::single::Iter<'a>,
+}
+impl Iterator for TypingIter<'_> {
+    type Item = Typing;
+    fn next(&mut self) -> Option<Typing> {
+        let kv = self._iter.next()?;
+        let val = kv.unwrap().1.unwrap();
+        if let Value::Blob(bytes) = val {
+            let thing = decode_item(bytes).unwrap().1;
+            if let LiteralItem::Typing(t) = thing {
+                return Some(t);
+            } else {
+                return self.next();
+            }
+        } else {
+            panic!("non-blob in store");
+        }
+    }
+}
+
 impl<'a> Db<'a> {
+    // FIXME handle errors
+    pub fn iter_typings<'b>(&self, reader: &'b rkv::Reader) -> TypingIter<'b> {
+        let iter = self.store.iter_start(reader).unwrap();
+        TypingIter { 
+            _iter: iter,
+        }
+    }
+
+    pub fn reader(&self) -> rkv::Reader {
+        self.env.read().expect("reader")
+    }
+
     pub fn put(&self, item: &impl Storable) -> Result<Hash, MonsterError> {
         // FIXME - handle errors properly here
         let hash = item.hash();

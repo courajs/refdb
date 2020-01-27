@@ -38,7 +38,7 @@ fn run_app() -> Result<(), Error> {
     if args.len() <= 2 {
         bail!("provide an argument!")
     }
-    if !(args[1] == "store_string" || args[1] == "fetch_string" || args[1] == "store") {
+    if !(args[1] == "foo" || args[1] == "store_string" || args[1] == "fetch_string" || args[1] == "store") {
         bail!("commands are \"store\", \"store_string\" and \"fetch_string\"")
     }
 
@@ -61,6 +61,13 @@ fn run_app() -> Result<(), Error> {
     db.put_item(&Item::TypeDef(labels_rad.clone()))?;
     let (env_rad, _) = Env::radt();
     db.put_item(&Item::TypeDef(env_rad.clone()))?;
+
+    {
+        let r = db.reader();
+        for t in db.iter_typings(&r) {
+            dbg!(t);
+        }
+    }
 
     if args[1] == "store" {
         let input = args[2].deref();
