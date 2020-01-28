@@ -38,7 +38,7 @@ fn run_app() -> Result<(), Error> {
     if args.len() <= 2 {
         bail!("provide an argument!")
     }
-    if !(args[1] == "foo" || args[1] == "store_string" || args[1] == "fetch_string" || args[1] == "store") {
+    if !(args[1] == "foo" || args[1] == "store_string" || args[1] == "fetch_string" || args[1] == "store" || args[1] == "list_types") {
         bail!("commands are \"store\", \"store_string\" and \"fetch_string\"")
     }
 
@@ -62,11 +62,15 @@ fn run_app() -> Result<(), Error> {
     let (env_rad, _) = Env::radt();
     db.put_item(&Item::TypeDef(env_rad.clone()))?;
 
-    {
+    if args[1] == "list_types" {
         let r = db.reader();
+        let mut types: Vec<Hash> = Vec::new();
         for t in db.iter_typings(&r) {
-            dbg!(t);
+            if t.kind == RADT_TYPE_REF {
+                types.push(t.hash());
+            }
         }
+        dbg!(types);
     }
 
     if args[1] == "store" {
