@@ -80,6 +80,8 @@ fn run_app() -> Result<(), Error> {
     })?;
 
     if args[1] == "list_types" {
+        let env = db.get_default_env()?.unwrap();
+
         let mut types: Vec<Hash> = Vec::new();
         {
             let r = db.reader();
@@ -89,7 +91,16 @@ fn run_app() -> Result<(), Error> {
                 }
             }
         }
-        for t in types {
+        let (labeled, unlabeled) = types.into_iter().partition::<Vec<Hash>, _>(|t| env.labelings.contains_key(t));
+
+        for t in labeled {
+            if let Ok(Item::TypeDef(r)) = db.get(t) {
+                let l = env.labelings.get(&t).unwrap();
+                let s = labels::print_with_labeling(&r, &l)?;
+                println!("{}", s);
+            }
+        }
+        for t in unlabeled {
             if let Ok(Item::TypeDef(r)) = db.get(t) {
                 println!("{}", r);
             }

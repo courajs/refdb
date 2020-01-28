@@ -84,7 +84,7 @@ impl Display for LabeledItem {
 // write! returns a result, because writing to a stream may fail.
 // But writing to a string won't fail, so don't bother with a bunch of error conversion boilerplate
 #[allow(unused_must_use)]
-fn print_with_labeling(t: &RADT, l: &LabelSet) -> Result<String, MonsterError> {
+pub fn print_with_labeling(t: &RADT, l: &LabelSet) -> Result<String, MonsterError> {
     let labels = &l.0;
     if t.items.len() != labels.len() {
         return Err(MonsterError::LabelingNumItemMismatch);

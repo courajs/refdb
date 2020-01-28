@@ -226,12 +226,10 @@ impl<'a> Db<'a> {
 
     pub fn get_default_env(&self) -> Result<Option<Env>, MonsterError> {
         let h = self.get_default_env_hash()?;
-        println!("h {:?}", h);
         if let None = h {
             return Ok(None);
         }
         let hash = h.unwrap();
-        println!("Getting environment ({})", hash);
         self.get_env(hash)
     }
 
@@ -259,7 +257,6 @@ impl<'a> Db<'a> {
         if typed.kind != env_typeref {
             return Err(MonsterError::Todo("Tried to get_env a non-env"));
         }
-        println!("hey");
 
         let mut deps: HashMap<Hash, Item> = HashMap::new();
         // already verified as it was constructed from bytes by .get()
