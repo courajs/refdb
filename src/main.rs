@@ -80,14 +80,20 @@ fn run_app() -> Result<(), Error> {
     })?;
 
     if args[1] == "list_types" {
-        let r = db.reader();
         let mut types: Vec<Hash> = Vec::new();
-        for t in db.iter_typings(&r) {
-            if t.kind == RADT_TYPE_REF {
-                types.push(t.hash());
+        {
+            let r = db.reader();
+            for t in db.iter_typings(&r) {
+                if t.kind == RADT_TYPE_REF {
+                    types.push(t.hash());
+                }
             }
         }
-        dbg!(types);
+        for t in types {
+            if let Ok(Item::TypeDef(r)) = db.get(t) {
+                println!("{}", r);
+            }
+        }
     }
 
     if args[1] == "store" {

@@ -192,8 +192,12 @@ pub enum RADTItem {
 
 impl fmt::Display for RADT {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        if let Ok(s) = String::from_utf8(self.uniqueness.to_vec()) {
-            write!(f, "{}\n", s)?;
+        use crate::storage::Storable;
+        let t = Typing {kind: RADT_TYPE_REF, data: self.hash() };
+        writeln!(f, "ref: {}", t.hash())?;
+        if self.uniqueness.is_ascii() {
+            // TODO check for non-printable characters with char::is_ascii_control
+            writeln!(f, "{}", std::str::from_utf8(&self.uniqueness).unwrap())?;
         } else {
             write!(f, "0x")?;
             for c in self.uniqueness.iter() {
