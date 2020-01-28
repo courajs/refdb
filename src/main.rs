@@ -55,12 +55,29 @@ fn run_app() -> Result<(), Error> {
         store: &store,
     };
 
-    let (string_rad, stringtype) = String::radt();
-    db.put_item(&Item::TypeDef(string_rad.clone()))?;
-    let (labels_rad, labeltype) = LabelSet::radt();
-    db.put_item(&Item::TypeDef(labels_rad.clone()))?;
-    let (env_rad, _) = Env::radt();
-    db.put_item(&Item::TypeDef(env_rad.clone()))?;
+    db.init(1, |db| {
+        let (string_rad, stringtype) = String::radt();
+        let (labels_rad, labeltype) = LabelSet::radt();
+        let (env_rad, _) = Env::radt();
+        db.put_item(&Item::TypeDef(string_rad.clone()))?;
+        db.put_item(&Item::TypeDef(labels_rad.clone()))?;
+        db.put_item(&Item::TypeDef(env_rad.clone()))?;
+
+        let mut env = db.get_default_env()?.unwrap_or_else(||
+            Env {
+                labelings: HashMap::new(),
+                variables: HashMap::new(),
+            }
+        );
+        env.labelings.insert(Item::TypeDef(string_rad).hash(), LabelSet(vec![
+                Label {
+                    name: "String".to_owned(),
+                    item: LabeledItem::Type,
+                },
+        ]));
+
+        db.update_default_env(&env)
+    })?;
 
     if args[1] == "list_types" {
         let r = db.reader();
@@ -83,17 +100,7 @@ fn run_app() -> Result<(), Error> {
         };
         let almost = eval::definitions(&defs)?;
 
-        let mut env = db.get_default_env()?.unwrap_or_else(|| {
-            let mut labelings = HashMap::new();
-            labelings.insert(Item::TypeDef(string_rad).hash(), LabelSet(vec![
-                    Label {
-                        name: "String".to_owned(),
-                        item: LabeledItem::Type,
-                    },
-            ]));
-            Env { labelings, variables: HashMap::new() }
-        });
-
+        let mut env = db.get_default_env()?.unwrap();
 
         let existing_names = env.defined_names();
 

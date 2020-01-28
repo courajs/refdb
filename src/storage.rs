@@ -128,6 +128,28 @@ impl Iterator for TypingIter<'_> {
 }
 
 impl<'a> Db<'a> {
+    pub fn init(&self, gen: u64, f: impl FnOnce(&Self) -> Result<(), MonsterError>) -> Result<(), MonsterError> {
+        let store = self.env.open_single("meta", rkv::StoreOptions::create()).unwrap();
+        {
+            let reader = self.env.read().expect("reader");
+            let r = store.get(&reader, "init").map_err(|e| MonsterError::RkvError(e))?;
+
+            if let Some(Value::U64(current_gen)) = r {
+                if gen == current_gen {
+                    return Ok(())
+                }
+            }
+        }
+        f(self)?;
+        {
+            let mut writer = self.env.write().expect("writer");
+            store.put(&mut writer, "init", &Value::U64(gen)).map_err(|e| MonsterError::RkvError(e))?;
+            writer.commit().map_err(MonsterError::RkvError)?;
+        }
+
+        Ok(())
+    }
+
     // FIXME handle errors
     pub fn iter_typings<'b>(&self, reader: &'b rkv::Reader) -> TypingIter<'b> {
         let iter = self.store.iter_start(reader).unwrap();
