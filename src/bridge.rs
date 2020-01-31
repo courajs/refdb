@@ -14,6 +14,10 @@ pub trait Bridged: Sized {
     fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError>;
 }
 
+pub trait Labeled {
+    fn label() -> LabelSet;
+}
+
 impl Bridged for String {
     fn radt() -> (RADT, TypeRef) {
         let t = RADT {
@@ -588,6 +592,68 @@ impl Bridged for Env {
 }
 
 use crate::eval::*;
+
+impl Labeled for LabelSet {
+    fn label() -> LabelSet {
+        LabelSet(vec![
+            Label {
+                name: "Nil".to_owned(),
+                item: LabeledItem::Product(Vec::new()),
+            },
+            Label {
+                name: "Label".to_owned(),
+                item: LabeledItem::Product(vec![
+                    Label { name: "name".to_owned(), item: LabeledItem::Type },
+                    Label { name: "item".to_owned(), item: LabeledItem::Type },
+                ]),
+            },
+            Label {
+                name: "LabelCons".to_owned(),
+                item: LabeledItem::Product(vec![
+                    Label { name: "head".to_owned(), item: LabeledItem::Type },
+                    Label { name: "tail".to_owned(), item: LabeledItem::Type },
+                ]),
+            },
+            Label {
+                name: "LabelList".to_owned(),
+                item: LabeledItem::Sum(vec![
+                    Label { name: "nil".to_owned(), item: LabeledItem::Type },
+                    Label { name: "cons".to_owned(), item: LabeledItem::Type },
+                ]),
+            },
+            Label {
+                name: "LabeledItem::Product".to_owned(),
+                item: LabeledItem::Type,
+            },
+            Label {
+                name: "LabeledItem::Sum".to_owned(),
+                item: LabeledItem::Type,
+            },
+            Label {
+                name: "LabeledItem".to_owned(),
+                item: LabeledItem::Sum(vec![
+                    Label { name: "product".to_owned(), item: LabeledItem::Type },
+                    Label { name: "sum".to_owned(), item: LabeledItem::Type },
+                    Label { name: "type".to_owned(), item: LabeledItem::Type },
+                ]),
+            },
+            Label {
+                name: "LabelCons".to_owned(),
+                item: LabeledItem::Product(vec![
+                    Label { name: "head".to_owned(), item: LabeledItem::Type },
+                    Label { name: "tail".to_owned(), item: LabeledItem::Type },
+                ]),
+            },
+            Label {
+                name: "LabelList".to_owned(),
+                item: LabeledItem::Sum(vec![
+                    Label { name: "nil".to_owned(), item: LabeledItem::Type },
+                    Label { name: "cons".to_owned(), item: LabeledItem::Type },
+                ]),
+            },
+        ])
+    }
+}
 
 impl Bridged for Label {
     fn radt() -> (RADT, TypeRef) {

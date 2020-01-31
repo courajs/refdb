@@ -22,7 +22,7 @@ use crate::core::*;
 use crate::labels::*;
 use crate::storage::*;
 use crate::types::*;
-use crate::bridge::Bridged;
+use crate::bridge::*;
 use crate::error::MonsterError;
 use crate::eval::Env;
 
@@ -55,13 +55,20 @@ fn run_app() -> Result<(), Error> {
         store: &store,
     };
 
-    db.init(1, |db| {
+    db.init(3, |db| {
         let (string_rad, stringtype) = String::radt();
         let (labels_rad, labeltype) = LabelSet::radt();
         let (env_rad, _) = Env::radt();
         db.put_item(&Item::TypeDef(string_rad.clone()))?;
         db.put_item(&Item::TypeDef(labels_rad.clone()))?;
         db.put_item(&Item::TypeDef(env_rad.clone()))?;
+
+        let label_label = LabelSet::label();
+        let (label_value, label_deps) = label_label.to_value();
+        db.put_item(&Item::Value(label_value))?;
+        for item in label_deps {
+            db.put_item(&item)?;
+        }
 
         let mut env = db.get_default_env()?.unwrap_or_else(||
             Env {
@@ -75,6 +82,7 @@ fn run_app() -> Result<(), Error> {
                     item: LabeledItem::Type,
                 },
         ]));
+        env.labelings.insert(Item::TypeDef(labels_rad).hash(), label_label);
 
         db.update_default_env(&env)
     })?;
@@ -121,25 +129,22 @@ fn run_app() -> Result<(), Error> {
                 }
             }
 
+            let kin = db.get(kind.definition)?;
+            let radt = sure!(kin, Item::TypeDef(r) => r);
+            let spec = types::TypeSpec {
+                definition: &radt,
+                item: kind.item,
+            };
+
             for t in vals {
                 if t.kind == kind {
-                    
                     let val = db.get(t.hash())?;
                     let typed_val = sure!(val, Item::Value(tv) => tv);
                     let value = typed_val.value;
 
-                    let kin = db.get(kind.definition)?;
-                    let radt = sure!(kin, Item::TypeDef(r) => r);
-                    let spec = types::TypeSpec {
-                        definition: &radt,
-                        item: kind.item,
-                    };
-
                     println!("{}", labels::print_val_with_env(&value, &spec, &env)?);
                 }
             }
-
-            println!("Gonna list types for {:?}", kind);
         },
 
         "list_types" => {

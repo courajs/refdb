@@ -377,7 +377,8 @@ pub fn print_val_with_env(
 ) -> Result<String, MonsterError> {
     use crate::storage::Storable;
     let def_hash = spec.definition.hash();
-    let labels = match env.labelings.get(&def_hash) {
+    let typing = Typing { kind: RADT_TYPE_REF, data: def_hash };
+    let labels = match env.labelings.get(&typing.hash()) {
         None => return Ok(format!("{}", value)),
         Some(LabelSet(labels)) => labels,
     };
@@ -450,12 +451,10 @@ fn inner_print_val_with_env(
                 (RADTItem::Product(ff), LabeledItem::Product(fff), RADTValue::Product(ffff))
                     if ff.len() == 0 && fff.len() == 0 && ffff.len() == 0 =>
                 {
-                    println!("empty");
                     Ok(())
                 }
                 (a, b, c) => {
                     write!(w, " ");
-                    dbg!(a, b, c);
                     inner_print_val_with_env(
                         w,
                         env,
@@ -474,7 +473,6 @@ fn inner_print_val_with_env(
             RADTValue::Product(field_values),
         ) => {
             if fields.len() != field_labels.len() || fields.len() != field_values.len() {
-                dbg!((&fields, &field_labels, &field_values));
                 return Err(MonsterError::NumFieldMismatch);
             }
             write!(w, "{{");
@@ -568,12 +566,10 @@ fn inner_print_val_with_labeling(
                 (RADTItem::Product(ff), LabeledItem::Product(fff), RADTValue::Product(ffff))
                     if ff.len() == 0 && fff.len() == 0 && ffff.len() == 0 =>
                 {
-                    println!("empty");
                     Ok(())
                 }
                 (a, b, c) => {
                     write!(w, " ");
-                    dbg!(a, b, c);
                     inner_print_val_with_labeling(
                         w,
                         base_items,
@@ -591,7 +587,6 @@ fn inner_print_val_with_labeling(
             RADTValue::Product(field_values),
         ) => {
             if fields.len() != field_labels.len() || fields.len() != field_values.len() {
-                dbg!((&fields, &field_labels, &field_values));
                 return Err(MonsterError::NumFieldMismatch);
             }
             write!(w, "{{");
