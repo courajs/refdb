@@ -111,6 +111,33 @@ fn run_app() -> Result<(), Error> {
                 },
                 _ => panic!("Shouldn't get here"),
             };
+            
+            let mut vals = Vec::new();
+            {
+                for t in db.iter_typings(&db.reader()) {
+                    if t.kind == kind {
+                        vals.push(t);
+                    }
+                }
+            }
+
+            for t in vals {
+                if t.kind == kind {
+                    
+                    let val = db.get(t.hash())?;
+                    let typed_val = sure!(val, Item::Value(tv) => tv);
+                    let value = typed_val.value;
+
+                    let kin = db.get(kind.definition)?;
+                    let radt = sure!(kin, Item::TypeDef(r) => r);
+                    let spec = types::TypeSpec {
+                        definition: &radt,
+                        item: kind.item,
+                    };
+
+                    println!("{}", labels::print_val_with_env(&value, &spec, &env)?);
+                }
+            }
 
             println!("Gonna list types for {:?}", kind);
         },

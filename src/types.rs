@@ -254,6 +254,24 @@ pub enum RADTValue {
     Product(Vec<RADTValue>),
 }
 
+impl Display for RADTValue {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            RADTValue::Hash(h) => write!(f, "{}", h),
+            RADTValue::Sum { kind, value } => {
+                write!(f, "({}:{})", kind, value)
+            },
+            RADTValue::Product(fields) => {
+                write!(f, "{{")?;
+                for i in 0..fields.len() {
+                    write!(f, "{}: {},", i, &fields[i])?;
+                }
+                write!(f, "}}")
+            }
+        }
+    }
+}
+
 impl Serializable for RADTValue {
     fn bytes_into(&self, v: &mut Vec<u8>) {
         match self {

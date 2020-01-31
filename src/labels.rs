@@ -370,6 +370,137 @@ fn print_item_with_labeling(
 }
 
 #[allow(unused_must_use)]
+pub fn print_val_with_env(
+    value: &RADTValue,
+    spec: &TypeSpec,
+    env: &Env,
+) -> Result<String, MonsterError> {
+    use crate::storage::Storable;
+    let def_hash = spec.definition.hash();
+    let labels = match env.labelings.get(&def_hash) {
+        None => return Ok(format!("{}", value)),
+        Some(LabelSet(labels)) => labels,
+    };
+    if spec.definition.items.len() != labels.len() {
+        return Err(MonsterError::LabelingNumItemMismatch);
+    }
+    let mut s = format!("[{} ", labels[spec.item].name);
+    inner_print_val_with_env(
+        &mut s,
+        env,
+        &spec.definition.items,
+        labels,
+        spec.item(),
+        &labels[spec.item].item,
+        value,
+    )?;
+    write!(s, "]");
+
+    Ok(s)
+}
+
+#[allow(unused_must_use)]
+fn inner_print_val_with_env(
+    w: &mut String,
+    env: &Env,
+    base_items: &[RADTItem],
+    base_labels: &[Label],
+    t: &RADTItem,
+    l: &LabeledItem,
+    v: &RADTValue,
+) -> Result<(), MonsterError> {
+    match (t, l, v) {
+        (RADTItem::ExternalType(typeref), LabeledItem::Type, RADTValue::Hash(h)) => {
+            if let Some(name) = env.name_of_typeref(*typeref) {
+                write!(w, "{}{}", name, h);
+            } else {
+                write!(w, "{}", h);
+            }
+            Ok(())
+        }
+        (RADTItem::CycleRef(i), LabeledItem::Type, _) => inner_print_val_with_env(
+            w,
+            env,
+            base_items,
+            base_labels,
+            &base_items[*i],
+            &base_labels[*i].item,
+            v,
+        ),
+        (RADTItem::Sum(items), LabeledItem::Sum(labels), RADTValue::Sum { kind, value }) => {
+            let kind = *kind as usize;
+            if items.len() != labels.len() {
+                return Err(MonsterError::LabelingSumVariantCountMismatch);
+            }
+            if kind >= items.len() {
+                return Err(MonsterError::InvalidSumVariant(items.len(), kind));
+            }
+            write!(w, "{}", labels[kind].name);
+
+            let mut newt = &items[kind];
+            let mut lab = &labels[kind].item;
+
+            while let RADTItem::CycleRef(i) = newt {
+                let i = *i as usize;
+                newt = &base_items[i];
+                lab = &base_labels[i].item;
+            }
+
+            match (newt, lab, &**value) {
+                (RADTItem::Product(ff), LabeledItem::Product(fff), RADTValue::Product(ffff))
+                    if ff.len() == 0 && fff.len() == 0 && ffff.len() == 0 =>
+                {
+                    println!("empty");
+                    Ok(())
+                }
+                (a, b, c) => {
+                    write!(w, " ");
+                    dbg!(a, b, c);
+                    inner_print_val_with_env(
+                        w,
+                        env,
+                        base_items,
+                        base_labels,
+                        &items[kind],
+                        &labels[kind].item,
+                        value,
+                    )
+                }
+            }
+        }
+        (
+            RADTItem::Product(fields),
+            LabeledItem::Product(field_labels),
+            RADTValue::Product(field_values),
+        ) => {
+            if fields.len() != field_labels.len() || fields.len() != field_values.len() {
+                dbg!((&fields, &field_labels, &field_values));
+                return Err(MonsterError::NumFieldMismatch);
+            }
+            write!(w, "{{");
+            for i in 0..fields.len() {
+                if i > 0 {
+                    write!(w, ", ");
+                }
+                write!(w, "{}: ", field_labels[i].name);
+                inner_print_val_with_env(
+                    w,
+                    env,
+                    base_items,
+                    base_labels,
+                    &fields[i],
+                    &field_labels[i].item,
+                    &field_values[i],
+                )?;
+            }
+            write!(w, "}}");
+            Ok(())
+        }
+        _ => Err(MonsterError::LabelingKindMismatch),
+    }
+}
+
+#[allow(unused_must_use)]
 fn print_val_with_labeling(
     spec: &TypeSpec,
     LabelSet(labels): &LabelSet,

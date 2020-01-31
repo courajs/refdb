@@ -128,6 +128,14 @@ impl Env {
         }
         result
     }
+
+    pub fn name_of_typeref(&self, t: TypeRef) -> Option<&str> {
+        if let Some(LabelSet(labels)) = self.labelings.get(&t.definition) {
+            Some(&labels[t.item].name)
+        } else {
+            None
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
