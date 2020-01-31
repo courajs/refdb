@@ -81,6 +81,161 @@ impl Display for LabeledItem {
     }
 }
 
+use crate::eval::Env;
+// write! returns a result, because writing to a stream may fail.
+// But writing to a string won't fail, so don't bother with a bunch of error conversion boilerplate
+#[allow(unused_must_use)]
+pub fn print_with_env(t: &RADT, e: &Env) -> Result<String, MonsterError> {
+    use crate::storage::Storable;
+    let typing = Typing { kind: RADT_TYPE_REF, data: t.hash() };
+    let labels = match e.labelings.get(&typing.hash()) {
+        Some(l) => &l.0,
+        None => return Ok(format!("{}", t)),
+    };
+    if t.items.len() != labels.len() {
+        return Err(MonsterError::LabelingNumItemMismatch);
+    }
+    let mut result = String::new();
+    for i in 0..t.items.len() {
+        let item = &t.items[i];
+        let label = &labels[i];
+        match item {
+            RADTItem::ExternalType(t) => {
+                match label.item {
+                    LabeledItem::Product(_) | LabeledItem::Sum(_) => {
+                        return Err(MonsterError::LabelingKindMismatch)
+                    }
+                    LabeledItem::Type => {
+                        if let Some(LabelSet(labels)) = e.labelings.get(&t.definition) {
+                            let value_name = &labels[t.item].name;
+                            writeln!(result, "{} = {};", label.name, value_name);
+                        } else {
+                            writeln!(result, "{} = {};", label.name, t);
+                        }
+                    }
+                };
+            }
+            RADTItem::CycleRef(idx) => {
+                match label.item {
+                    LabeledItem::Product(_) | LabeledItem::Sum(_) => {
+                        return Err(MonsterError::LabelingKindMismatch)
+                    }
+                    LabeledItem::Type => {
+                        writeln!(result, "{} = {};", label.name, labels[*idx].name)
+                    }
+                };
+            }
+            RADTItem::Product(ref v) if v.len() == 0 => {
+                writeln!(result, "{};", label.name);
+            }
+            RADTItem::Sum(_) | RADTItem::Product(_) => {
+                if let LabeledItem::Type = label.item {
+                    return Err(MonsterError::LabelingKindMismatch);
+                } else {
+                    write!(result, "{} = ", label.name);
+                    print_item_with_env(&mut result, e, &t.items, &labels, item, &label.item)?;
+                    writeln!(result, ";");
+                }
+            }
+        }
+    }
+    Ok(result)
+}
+//
+// write! returns a result, because writing to a stream may fail.
+// But writing to a string won't fail, so don't bother with a bunch of error conversion boilerplate
+#[allow(unused_must_use)]
+fn print_item_with_env(
+    s: &mut String,
+    e: &Env,
+    base_items: &[RADTItem],
+    base_labels: &[Label],
+    item: &RADTItem,
+    label_item: &LabeledItem,
+) -> Result<(), MonsterError> {
+    match item {
+        RADTItem::ExternalType(t) => {
+            if let LabeledItem::Type = label_item {
+                if let Some(LabelSet(labels)) = e.labelings.get(&t.definition) {
+                    let value_name = &labels[t.item].name;
+                    write!(s, "{}", value_name);
+                } else {
+                    write!(s, "{}", t);
+                }
+            } else {
+                return Err(MonsterError::LabelingKindMismatch);
+            }
+        }
+        RADTItem::CycleRef(idx) => {
+            if let LabeledItem::Type = label_item {
+                write!(s, "{}", base_labels[*idx].name);
+            } else {
+                return Err(MonsterError::LabelingKindMismatch);
+            }
+        }
+        RADTItem::Sum(variants) => {
+            if let LabeledItem::Sum(var_labels) = label_item {
+                if variants.len() != var_labels.len() {
+                    return Err(MonsterError::LabelingSumVariantCountMismatch);
+                }
+
+                write!(s, "(");
+                for i in 0..variants.len() {
+                    if i > 0 {
+                        write!(s, " | ");
+                    }
+                    match var_labels[i].item {
+                        LabeledItem::Product(ref v) if v.len() == 0 => {
+                            write!(s, "{}", var_labels[i].name);
+                        }
+                        _ => {
+                            write!(s, "{} ", var_labels[i].name);
+                            print_item_with_env(
+                                s,
+                                e,
+                                base_items,
+                                base_labels,
+                                &variants[i],
+                                &var_labels[i].item,
+                            )?;
+                        }
+                    }
+                }
+                write!(s, ")");
+            } else {
+                return Err(MonsterError::LabelingKindMismatch);
+            };
+        }
+        RADTItem::Product(fields) => {
+            if let LabeledItem::Product(field_labels) = label_item {
+                if fields.len() != field_labels.len() {
+                    return Err(MonsterError::LabelingProductFieldCountMismatch);
+                }
+                write!(s, "{{");
+                for i in 0..fields.len() {
+                    if i > 0 {
+                        write!(s, ", ");
+                    }
+                    write!(s, "{}: ", field_labels[i].name);
+                    print_item_with_env(
+                        s,
+                        e,
+                        base_items,
+                        base_labels,
+                        &fields[i],
+                        &field_labels[i].item,
+                    )?;
+                }
+                write!(s, "}}");
+            } else {
+                return Err(MonsterError::LabelingKindMismatch);
+            }
+        }
+    }
+    Ok(())
+}
+
+
 // write! returns a result, because writing to a stream may fail.
 // But writing to a string won't fail, so don't bother with a bunch of error conversion boilerplate
 #[allow(unused_must_use)]
