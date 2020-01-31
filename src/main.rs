@@ -38,7 +38,7 @@ fn run_app() -> Result<(), Error> {
     if args.len() <= 2 {
         bail!("provide an argument!")
     }
-    if !(args[1] == "foo" || args[1] == "store_string" || args[1] == "fetch_string" || args[1] == "store" || args[1] == "list_types") {
+    if !(args[1] == "foo" || args[1] == "store_string" || args[1] == "fetch_string" || args[1] == "store" || args[1] == "list_types" || args[1] == "list_of_type") {
         bail!("commands are \"store\", \"store_string\" and \"fetch_string\"")
     }
 
@@ -79,88 +79,129 @@ fn run_app() -> Result<(), Error> {
         db.update_default_env(&env)
     })?;
 
-    if args[1] == "list_types" {
-        let env = db.get_default_env()?.unwrap();
+    match args[1].deref() {
+        "list_of_type" => {
+            let env = db.get_default_env()?.unwrap();
+            let names = env.name_resolutions();
 
-        let mut types: Vec<Hash> = Vec::new();
-        {
-            let r = db.reader();
-            for t in db.iter_typings(&r) {
-                if t.kind == RADT_TYPE_REF {
-                    types.push(t.hash());
+            let spec = match lang::parse_ref(&args[2]) {
+                Err(_) => bail!("Specify a valid type"),
+                Ok((_,s)) => s
+            };
+
+            use lang::TypeSpec;
+            let kind = match spec {
+                TypeSpec::Name(n) => {
+                    match names.get(n) {
+                        Some(t) => *t,
+                        None => bail!("No type named \"{}\"", n),
+                    }
+                },
+                TypeSpec::Hash(h, item) => {
+                    TypeRef {
+                        definition: h,
+                        item,
+                    }
+                },
+                TypeSpec::ShortHash(prefix, item) => {
+                    TypeRef {
+                        definition: db.resolve_hash_prefix(&db.reader(), &prefix)?,
+                        item,
+                    }
+                },
+                _ => panic!("Shouldn't get here"),
+            };
+
+            println!("Gonna list types for {:?}", kind);
+        },
+
+        "list_types" => {
+            let env = db.get_default_env()?.unwrap();
+
+            let mut types: Vec<Hash> = Vec::new();
+            {
+                let r = db.reader();
+                for t in db.iter_typings(&r) {
+                    if t.kind == RADT_TYPE_REF {
+                        types.push(t.hash());
+                    }
                 }
             }
-        }
-        let (labeled, unlabeled) = types.into_iter().partition::<Vec<Hash>, _>(|t| env.labelings.contains_key(t));
+            let (labeled, unlabeled) = types.into_iter().partition::<Vec<Hash>, _>(|t| env.labelings.contains_key(t));
 
-        for t in labeled {
-            if let Ok(Item::TypeDef(r)) = db.get(t) {
-                let l = env.labelings.get(&t).unwrap();
-                let s = labels::print_with_env(&r, &env)?;
-                println!("{}", s);
+            for t in labeled {
+                if let Ok(Item::TypeDef(r)) = db.get(t) {
+                    let l = env.labelings.get(&t).unwrap();
+                    let s = labels::print_with_env(&r, &env)?;
+                    println!("{}", s);
+                }
             }
-        }
-        for t in unlabeled {
-            if let Ok(Item::TypeDef(r)) = db.get(t) {
-                println!("{}", r);
+            for t in unlabeled {
+                if let Ok(Item::TypeDef(r)) = db.get(t) {
+                    println!("{}", r);
+                }
             }
+        },
+
+        "store" => {
+            let input = args[2].deref();
+            let defs = match lang::parse_statements(input) {
+                Err(e) => {
+                    bail!("Error parsing input: {:?}", e);
+                },
+                Ok((_,defs)) => defs,
+            };
+            let almost = eval::definitions(&defs)?;
+
+            let mut env = db.get_default_env()?.unwrap();
+
+            let existing_names = env.defined_names();
+
+            let dups: Vec<&str> = almost.defined_names().into_iter().filter(|n| existing_names.contains(n)).collect();
+
+            if dups.len() > 0 {
+                bail!("The following names are already defined: {:?}", dups);
+            }
+
+            let new_defs = almost.resolve(&env.name_resolutions(), &HashMap::new());
+
+            let new_label = new_defs.labels;
+            let new_rad = RADT {
+                uniqueness: rand::random(),
+                items: new_defs.types,
+            };
+            
+            let new_hash = db.put_item(&Item::TypeDef(new_rad))?;
+
+            env.labelings.insert(new_hash, new_label);
+            db.update_default_env(&env)?;
+        },
+
+        "store_string" => {
+            let (val, deps) = args[2].to_value();
+            for i in deps { db.put_item(&i)?; }
+            let h = db.put_item(&Item::Value(val))?;
+            println!("{:?}", h);
+        },
+
+        "fetch_string" => {
+            let bytes = match hex::decode(&args[2]) {
+                Err(e) => {
+                    return Err(MonsterError::Todo("bad hex"))?
+                },
+                Ok(b) => b
+            };
+            if bytes.len() != 32 {
+                return Err(MonsterError::Todo("wrong hash length"))?
+            }
+            let h = Hash::sure_from(&bytes);
+            let s = db.get_string(h)?;
+            println!("Here's your string: {:?}", s);
         }
-    }
 
-    if args[1] == "store" {
-        let input = args[2].deref();
-        let defs = match lang::parse_statements(input) {
-            Err(e) => {
-                bail!("Error parsing input: {:?}", e);
-            },
-            Ok((_,defs)) => defs,
-        };
-        let almost = eval::definitions(&defs)?;
-
-        let mut env = db.get_default_env()?.unwrap();
-
-        let existing_names = env.defined_names();
-
-        let dups: Vec<&str> = almost.defined_names().into_iter().filter(|n| existing_names.contains(n)).collect();
-
-        if dups.len() > 0 {
-            bail!("The following names are already defined: {:?}", dups);
+        _ => {
+            bail!("no such command");
         }
-
-        let new_defs = almost.resolve(&env.name_resolutions(), &HashMap::new());
-
-        let new_label = new_defs.labels;
-        let new_rad = RADT {
-            uniqueness: rand::random(),
-            items: new_defs.types,
-        };
-        
-        let new_hash = db.put_item(&Item::TypeDef(new_rad))?;
-
-        env.labelings.insert(new_hash, new_label);
-        db.update_default_env(&env)?;
-    }
-
-    if args[1] == "store_string" {
-        let (val, deps) = args[2].to_value();
-        for i in deps { db.put_item(&i)?; }
-        let h = db.put_item(&Item::Value(val))?;
-        println!("{:?}", h);
-    }
-
-    if args[1] == "fetch_string" {
-        let bytes = match hex::decode(&args[2]) {
-            Err(e) => {
-                return Err(MonsterError::Todo("bad hex"))?
-            },
-            Ok(b) => b
-        };
-        if bytes.len() != 32 {
-            return Err(MonsterError::Todo("wrong hash length"))?
-        }
-        let h = Hash::sure_from(&bytes);
-        let s = db.get_string(h)?;
-        println!("Here's your string: {:?}", s);
     }
 
     Ok(())

@@ -425,4 +425,22 @@ impl<'a> Db<'a> {
         }
         Ok(())
     }
+
+    pub fn resolve_hash_prefix<'b>(&self, reader: &'b rkv::Reader, prefix: &[u8]) -> Result<Hash, MonsterError> {
+        let mut results = Vec::new();
+        for item in self.store.iter_from(reader, prefix).map_err(MonsterError::RkvError)? {
+            let (key, val) = item.map_err(MonsterError::RkvError)?;
+            if key.starts_with(prefix) {
+                results.push(Hash::sure_from(key));
+            } else {
+                break;
+            }
+        }
+
+        match results.len() {
+            0 => Err(MonsterError::HashResolutionNotFound),
+            1 => Ok(results[0]),
+            _ => Err(MonsterError::HashResolutionConflict(results)),
+        }
+    }
 }

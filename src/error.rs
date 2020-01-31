@@ -80,6 +80,10 @@ pub enum MonsterError {
     BridgedMissingDependency(&'static str),
     #[fail(display = "A dependency of a bridged type was of the wrong kind")]
     BridgedMistypedDependency,
+    #[fail(display = "No matching hash was found for prefix")]
+    HashResolutionNotFound,
+    #[fail(display = "Multiple matching hashes were found for prefix: {:?}", _0)]
+    HashResolutionConflict(Vec<Hash>),
     #[fail(display = "todo: {}", _0)]
     Todo(&'static str),
 }

@@ -59,6 +59,13 @@ pub fn parse(input: &str) -> Parsed {
     parse_string(input)
 }
 
+pub fn parse_ref(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
+    alt((
+        parse_hash,
+        parse_name,
+    ))(input)
+}
+
 fn parse_type(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     alt((
         parse_hash,     // #abcd_1234:8
