@@ -80,6 +80,25 @@ pub enum Literal<'a> {
     String(&'a str),
 }
 
+fn parse_value_expression(input: &str) -> IResult<&str, ValueExpr, VerboseError<&str>> {
+    todo!();
+}
+
+fn parse_typeref(input: &str) -> IResult<&str, TypeReference, VerboseError<&str>> {
+    map(alt((
+        parse_hash,
+        parse_name,
+    )),
+    |hash_or_name| {
+        match hash_or_name {
+            TypeSpec::Name(n) => TypeReference::Name(n),
+            TypeSpec::Hash(h, item) => TypeReference::Hash(h, item),
+            TypeSpec::ShortHash(prefix, item) => TypeReference::ShortHash(prefix.clone(), item),
+            _ => panic!("those parsers don't make anything else..."),
+        }
+    })(input)
+}
+
 fn parse_string(input: &str) -> Parsed {
     map(
         delimited(char('"'),
@@ -108,7 +127,7 @@ fn parse_type(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     ))(input)
 }
 fn parse_name(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
-    map(parse_identifier, |n| TypeSpec::Name(n))(input)
+    map(parse_identifier, TypeSpec::Name)(input)
 }
 fn parse_identifier(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
     take_while1(|c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '?' || c == '!' || c == '/')(input)
@@ -297,6 +316,7 @@ mod tests {
                 ].iter().cloned().collect())),
             },
         };
-        todo!();
+
+        assert_eq!(parse_value_expression(input), Ok(("", expected)));
     }
 }
