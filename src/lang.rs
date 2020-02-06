@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use nom::{
     IResult,
     error::VerboseError,
@@ -9,7 +11,7 @@ use nom::{
         alphanumeric0, anychar, char, one_of, none_of,
     },
     combinator::{
-        not, map, all_consuming,
+        not, map, opt, all_consuming,
     },
     multi::many1,
 };
@@ -46,6 +48,37 @@ pub enum TypeSpec<'a> {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct TypeDef<'a>(pub &'a str, pub TypeSpec<'a>);
+
+#[derive(Debug, PartialEq, Clone)]
+pub struct ValueExpr<'a> {
+    pub kind: TypeReference<'a>,
+    pub val: ValueItem<'a>,
+}
+
+#[derive(Debug, PartialEq, Clone)]
+pub enum TypeReference<'a> {
+    // named type
+    Name(&'a str),
+    // full hash and cycle index
+    Hash(Hash, usize),
+    // hash prefix and cycle index
+    ShortHash(Vec<u8>, usize),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ValueItem<'a> {
+    Variant {
+        label: &'a str,
+        val: Box<ValueItem<'a>>,
+    },
+    Fields(HashMap<&'a str, ValueItem<'a>>),
+    Literal(Literal<'a>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Literal<'a> {
+    String(&'a str),
+}
 
 fn parse_string(input: &str) -> Parsed {
     map(
@@ -144,6 +177,35 @@ fn parse_empty(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     Ok((input, TypeSpec::Unit))
 }
 
+fn squishy<I,O,E>(f: impl Fn(I) -> IResult<I,O,E>) -> impl Fn(I) -> IResult<I,O,E>
+    where
+    E: nom::error::ParseError<I>,
+    I: nom::InputTakeAtPosition,
+    <I as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone, 
+{
+    delimited(multispace0, f, multispace0)
+}
+
+pub fn parse_statements(input: &str) -> IResult<&str, Vec<TypeDef>, VerboseError<&str>> {
+    all_consuming(delimited(
+        multispace0,
+        separated_list(
+            squishy(char(';')),
+            alt((
+                map(tuple((char('T'), multispace1, parse_identifier, squishy(char('=')), parse_type)),
+                    |(_,_,name,_,t)| TypeDef(name, t)
+                ),
+                map(preceded(char('T'), squishy(parse_identifier)),
+                    |name| TypeDef(name, TypeSpec::Unit)
+                ),
+            ))
+                    
+        ),
+        squishy(opt(char(';'))),
+    ))
+    (input)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -218,36 +280,23 @@ mod tests {
 
         assert_eq!(parse_statements(input).assert(input), expected);
     }
-}
 
-fn squishy<I,O,E>(f: impl Fn(I) -> IResult<I,O,E>) -> impl Fn(I) -> IResult<I,O,E>
-    where
-    E: nom::error::ParseError<I>,
-    I: nom::InputTakeAtPosition,
-    <I as nom::InputTakeAtPosition>::Item: nom::AsChar + Clone, 
-{
-    delimited(multispace0, f, multispace0)
-}
-
-use nom::combinator::opt;
-
-
-pub fn parse_statements(input: &str) -> IResult<&str, Vec<TypeDef>, VerboseError<&str>> {
-    all_consuming(delimited(
-        multispace0,
-        separated_list(
-            squishy(char(';')),
-            alt((
-                map(tuple((char('T'), multispace1, parse_identifier, squishy(char('=')), parse_type)),
-                    |(_,_,name,_,t)| TypeDef(name, t)
-                ),
-                map(preceded(char('T'), squishy(parse_identifier)),
-                    |name| TypeDef(name, TypeSpec::Unit)
-                ),
-            ))
-                    
-        ),
-        squishy(opt(char(';'))),
-    ))
-    (input)
+    #[test]
+    fn test_value_expression() {
+        let input = "TypeRef (variantName {fieldName: {}, fieldName2: (var2 \"stringval\")})";
+        let expected = ValueExpr {
+            kind: TypeReference::Name("TypeRef"),
+            val:  ValueItem::Variant {
+                label: "variantName",
+                val: Box::new(ValueItem::Fields([
+                    ("fieldName", ValueItem::Fields(HashMap::new())),
+                    ("fieldName2", ValueItem::Variant {
+                        label: "var2",
+                        val: Box::new(ValueItem::Literal(Literal::String("stringval"))),
+                    }),
+                ].iter().cloned().collect())),
+            },
+        };
+        todo!();
+    }
 }
