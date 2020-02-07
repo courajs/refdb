@@ -101,6 +101,20 @@ pub enum Literal {
     String(String),
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValueAssignment<'a> {
+    pub ident: &'a str,
+    pub val: ValueExpr<'a>,
+}
+
+fn parse_value_assignment(input: &str) -> IResult<&str, ValueAssignment, VerboseError<&str>> {
+    map(
+        separated_pair(parse_identifier, squishy(char('=')), parse_value_expression),
+        |(ident, val)| ValueAssignment { ident, val }
+    )(input)
+}
+
+// TypeRef (variantName {fieldName: {}, fieldName2: (var2 "stringval")})
 fn parse_value_expression(input: &str) -> IResult<&str, ValueExpr, VerboseError<&str>> {
     map(tuple((parse_typeref, multispace1, parse_value_item)), 
         |(kind, _, val)| ValueExpr { kind, val })(input)
@@ -251,20 +265,22 @@ fn squishy<I,O,E>(f: impl Fn(I) -> IResult<I,O,E>) -> impl Fn(I) -> IResult<I,O,
     delimited(multispace0, f, multispace0)
 }
 
+pub fn parse_type_definition(input: &str) -> IResult<&str, TypeDef, VerboseError<&str>> {
+    preceded(
+        tuple((char('T'), multispace1)),
+        alt((
+            map(separated_pair(parse_identifier, squishy(char('=')), parse_type), |(name,t)| TypeDef(name, t)),
+            map(parse_identifier, |name| TypeDef(name, TypeSpec::Unit)),
+        ))
+    )(input)
+}
+
 pub fn parse_statements(input: &str) -> IResult<&str, Vec<TypeDef>, VerboseError<&str>> {
     all_consuming(delimited(
         multispace0,
         separated_list(
             squishy(char(';')),
-            alt((
-                map(tuple((char('T'), multispace1, parse_identifier, squishy(char('=')), parse_type)),
-                    |(_,_,name,_,t)| TypeDef(name, t)
-                ),
-                map(preceded(char('T'), squishy(parse_identifier)),
-                    |name| TypeDef(name, TypeSpec::Unit)
-                ),
-            ))
-                    
+            parse_type_definition,
         ),
         squishy(opt(char(';'))),
     ))
