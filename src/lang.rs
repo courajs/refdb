@@ -3,18 +3,35 @@ use std::collections::HashMap;
 use nom::{
     IResult,
     error::VerboseError,
-    sequence::delimited,
+    sequence::{
+        tuple,
+        delimited,
+        preceded,
+        separated_pair,
+    },
     branch::alt,
-    bytes::complete::escaped_transform,
-    bytes::complete::take_while1,
+    bytes::complete::{
+        take,
+        take_while1,
+        escaped_transform,
+    },
     character::complete::{
-        alphanumeric0, anychar, char, one_of, none_of,
+        alphanumeric0,
+        anychar, char,
+        one_of, none_of,
+        digit1, hex_digit1,
+        multispace0, multispace1,
     },
     combinator::{
         not, map, opt, all_consuming,
     },
-    multi::many1,
+    multi::{
+        many1,
+        separated_list,
+        separated_nonempty_list,
+    },
 };
+
 use hex_literal::hex;
 use indoc::indoc as dedent;
 
@@ -67,21 +84,64 @@ pub enum TypeReference<'a> {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ValueItem<'a> {
-    Variant {
-        label: &'a str,
-        val: Box<ValueItem<'a>>,
-    },
-    Fields(HashMap<&'a str, ValueItem<'a>>),
-    Literal(Literal<'a>),
+    Variant(VariantDef<'a>),
+    Fields(FieldsDef<'a>),
+    Literal(Literal),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Literal<'a> {
-    String(&'a str),
+pub struct VariantDef<'a> {
+    pub label: &'a str,
+    pub val: Box<ValueItem<'a>>,
+}
+pub type FieldsDef<'a> = Vec<(&'a str, ValueItem<'a>)>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Literal {
+    String(String),
 }
 
 fn parse_value_expression(input: &str) -> IResult<&str, ValueExpr, VerboseError<&str>> {
-    todo!();
+    map(tuple((parse_typeref, multispace1, parse_value_item)), 
+        |(kind, _, val)| ValueExpr { kind, val })(input)
+}
+
+fn parse_value_item(input: &str) -> IResult<&str, ValueItem, VerboseError<&str>> {
+    alt((
+        map(parse_variant, ValueItem::Variant),
+        map(parse_fields, ValueItem::Fields),
+        map(parse_literal, ValueItem::Literal),
+    ))(input)
+}
+
+fn parse_variant(input: &str) -> IResult<&str, VariantDef, VerboseError<&str>> {
+    map(tuple((
+        char('('),
+        multispace0,
+        parse_identifier,
+        multispace1,
+        parse_value_item,
+        multispace0,
+        char(')'),
+    )), |(_,_,label,_,val,_,_)| VariantDef { label, val: Box::new(val) })
+    (input)
+}
+fn parse_fields(input: &str) -> IResult<&str, FieldsDef, VerboseError<&str>> {
+    delimited(
+        char('{'),
+        separated_list(
+            char(','),
+            squishy(separated_pair(
+                parse_identifier,
+                squishy(char(':')),
+                parse_value_item,
+            )),
+        ),
+        char('}'),
+    )(input)
+}
+fn parse_literal(input: &str) -> IResult<&str, Literal, VerboseError<&str>> {
+    map(parse_string, Literal::String)(input)
 }
 
 fn parse_typeref(input: &str) -> IResult<&str, TypeReference, VerboseError<&str>> {
@@ -99,16 +159,12 @@ fn parse_typeref(input: &str) -> IResult<&str, TypeReference, VerboseError<&str>
     })(input)
 }
 
-fn parse_string(input: &str) -> Parsed {
-    map(
-        delimited(char('"'),
-                  escaped_transform(none_of("\\\""), '\\', anychar),
-                  char('"')),
-    |s| AST::<'_>::String(s))(input)
-}
-
-pub fn parse(input: &str) -> Parsed {
-    parse_string(input)
+fn parse_string(input: &str) -> IResult<&str, String, VerboseError<&str>> {
+    delimited(
+        char('"'),
+        escaped_transform(none_of("\\\""), '\\', anychar),
+        char('"'),
+    )(input)
 }
 
 pub fn parse_ref(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
@@ -134,9 +190,6 @@ fn parse_identifier(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
 }
 
 
-use nom::sequence::tuple;
-use nom::sequence::preceded;
-
 fn parse_hash(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     let (rest, (_,bytes,_,cycle)) = tuple((char('#'), hex_bytes, char(':'), decimal_integer))(input)?;
     // FIXME: error for hashes that are too long
@@ -147,16 +200,11 @@ fn parse_hash(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     }
 }
 
-use nom::multi::separated_nonempty_list;
-use nom::multi::separated_list;
 
 fn hex_bytes(input: &str) -> IResult<&str, Vec<u8>, VerboseError<&str>> {
     separated_nonempty_list(one_of("-_"), many1(hex_byte))(input).map(|(i, r)| (i, r.into_iter().flatten().collect()))
 }
 
-use nom::character::complete::hex_digit1;
-use nom::character::complete::digit1;
-use nom::bytes::complete::take;
 
 fn hex_byte(input: &str) -> IResult<&str, u8, VerboseError<&str>> {
     let (rest, digits) = take(2u8)(input)?;
@@ -168,8 +216,6 @@ fn decimal_integer(input: &str) -> IResult<&str, usize, VerboseError<&str>> {
     Ok((rest, usize::from_str_radix(digits, 10).unwrap()))
 }
 
-use nom::character::complete::multispace0;
-use nom::character::complete::multispace1;
 
 fn parse_product(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     map(delimited(
@@ -273,7 +319,7 @@ mod tests {
     fn test_string_parsing() {
         let input = r#"      "hey \"Alice\" and\\or \"Bob\""      "#.trim();
         let output = parse_string(input).assert(input);
-        let expected = AST::String(String::from("hey \"Alice\" and\\or \"Bob\""));
+        let expected = String::from("hey \"Alice\" and\\or \"Bob\"");
 
         assert_eq!(output, expected);
     }
@@ -305,16 +351,16 @@ mod tests {
         let input = "TypeRef (variantName {fieldName: {}, fieldName2: (var2 \"stringval\")})";
         let expected = ValueExpr {
             kind: TypeReference::Name("TypeRef"),
-            val:  ValueItem::Variant {
+            val:  ValueItem::Variant( VariantDef {
                 label: "variantName",
                 val: Box::new(ValueItem::Fields([
-                    ("fieldName", ValueItem::Fields(HashMap::new())),
-                    ("fieldName2", ValueItem::Variant {
+                    ("fieldName", ValueItem::Fields(Vec::new())),
+                    ("fieldName2", ValueItem::Variant(VariantDef {
                         label: "var2",
-                        val: Box::new(ValueItem::Literal(Literal::String("stringval"))),
-                    }),
+                        val: Box::new(ValueItem::Literal(Literal::String("stringval".to_owned()))),
+                    })),
                 ].iter().cloned().collect())),
-            },
+            }),
         };
 
         assert_eq!(parse_value_expression(input), Ok(("", expected)));
