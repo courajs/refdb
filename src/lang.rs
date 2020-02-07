@@ -342,24 +342,23 @@ mod tests {
 
     #[test]
     fn test_typedefs() {
-        let input = dedent!("
-            T Nil;
-            T Cons = {head: Value, tail: List};
-            T List = (cons Cons | nil Nil);"
-        ).trim();
-        let expected = vec![
-            TypeDef("Nil", TypeSpec::Unit),
-            TypeDef("Cons", TypeSpec::Product(vec![
-                ("head", TypeSpec::Name("Value")),
-                ("tail", TypeSpec::Name("List")),
-            ])),
-            TypeDef("List", TypeSpec::Sum(vec![
-                ("cons", TypeSpec::Name("Cons")),
-                ("nil", TypeSpec::Name("Nil")),
-            ])),
-        ];
+        let input = "T Nil";
+        let expected = TypeDef("Nil", TypeSpec::Unit);
+        assert_eq!(parse_type_definition(input).assert(input), expected);
 
-        assert_eq!(parse_statements(input).assert(input), expected);
+        let input = "T Cons = {head: Value, tail: List}";
+        let expected = TypeDef("Cons", TypeSpec::Product(vec![
+            ("head", TypeSpec::Name("Value")),
+            ("tail", TypeSpec::Name("List")),
+        ]));
+        assert_eq!(parse_type_definition(input).assert(input), expected);
+
+        let input = "T List = (cons Cons | nil Nil)";
+        let expected = TypeDef("List", TypeSpec::Sum(vec![
+            ("cons", TypeSpec::Name("Cons")),
+            ("nil", TypeSpec::Name("Nil")),
+        ]));
+        assert_eq!(parse_type_definition(input).assert(input), expected);
     }
 
     #[test]
