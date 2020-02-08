@@ -96,10 +96,10 @@ impl<'a> TypeReference<'a> {
 pub enum ValueItem<'a> {
     Variant(VariantDef<'a>),
     Fields(FieldsDef<'a>),
+    Literal(Literal),
     NameRef(&'a str),
     HashRef(Hash),
     ShortHashRef(Vec<u8>),
-    Literal(Literal),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -138,6 +138,11 @@ fn parse_value_item(input: &str) -> IResult<&str, ValueItem, VerboseError<&str>>
         map(parse_variant, ValueItem::Variant),
         map(parse_fields, ValueItem::Fields),
         map(parse_literal, ValueItem::Literal),
+        map(parse_identifier, ValueItem::NameRef),
+        map(parse_hash, |hr| match hr {
+            HashRef::Full(h) => ValueItem::HashRef(h),
+            HashRef::Prefix(p) => ValueItem::ShortHashRef(p),
+        }),
     ))(input)
 }
 
@@ -390,8 +395,8 @@ mod tests {
                 label: "variantName",
                 val: Box::new(ValueItem::Fields([
                     ("field", ValueItem::Fields(Vec::new())),
-                    ("field2", ValueItem::Fields(Vec::new())),
-                    ("field3", ValueItem::Fields(Vec::new())),
+                    ("field2", ValueItem::NameRef("thing")),
+                    ("field3", ValueItem::ShortHashRef(hex!("abcd").to_vec())),
                     ("field4", ValueItem::Variant(VariantDef {
                         label: "var2",
                         val: Box::new(ValueItem::Literal(Literal::String("stringval".to_owned()))),
