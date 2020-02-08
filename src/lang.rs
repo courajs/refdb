@@ -199,6 +199,14 @@ fn parse_type(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
 fn parse_name(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     map(parse_identifier, TypeSpec::Name)(input)
 }
+
+// TODO: this allows numbers as identifiers. That's kinda good, for
+// specifying values of unlabeled types. But it does mean we can't
+// let there ever be a syntactic spot that allows both numbers and
+// identifiers or it will be ambiguous.
+// We should probably just require the first char be non-numeric like
+// everyone else. Then parse variant and field specifiers differently to
+// allow numbers there.
 fn parse_identifier(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
     take_while1(|c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '?' || c == '!' || c == '/')(input)
 }
@@ -231,6 +239,7 @@ fn decimal_integer(input: &str) -> IResult<&str, usize, VerboseError<&str>> {
 }
 
 
+// TODO: parse error on duplicate keys?
 fn parse_product(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     map(delimited(
             char('{'),
