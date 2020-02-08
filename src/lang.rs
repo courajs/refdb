@@ -82,10 +82,23 @@ pub enum TypeReference<'a> {
     ShortHash(Vec<u8>, usize),
 }
 
+impl<'a> TypeReference<'a> {
+    fn to_spec(self) -> TypeSpec<'a> {
+        match self {
+            TypeReference::Name(n) => TypeSpec::Name(n),
+            TypeReference::Hash(h, item) => TypeSpec::Hash(h, item),
+            TypeReference::ShortHash(prefix, item) => TypeSpec::ShortHash(prefix, item),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ValueItem<'a> {
     Variant(VariantDef<'a>),
     Fields(FieldsDef<'a>),
+    NameRef(&'a str),
+    HashRef(Hash),
+    ShortHashRef(Vec<u8>),
     Literal(Literal),
 }
 
@@ -158,19 +171,11 @@ fn parse_literal(input: &str) -> IResult<&str, Literal, VerboseError<&str>> {
     map(parse_string, Literal::String)(input)
 }
 
-fn parse_typeref(input: &str) -> IResult<&str, TypeReference, VerboseError<&str>> {
-    map(alt((
-        parse_hash,
-        parse_name,
-    )),
-    |hash_or_name| {
-        match hash_or_name {
-            TypeSpec::Name(n) => TypeReference::Name(n),
-            TypeSpec::Hash(h, item) => TypeReference::Hash(h, item),
-            TypeSpec::ShortHash(prefix, item) => TypeReference::ShortHash(prefix.clone(), item),
-            _ => panic!("those parsers don't make anything else..."),
-        }
-    })(input)
+pub fn parse_typeref(input: &str) -> IResult<&str, TypeReference, VerboseError<&str>> {
+    alt((
+        parse_hash_typeref,
+        map(parse_identifier, TypeReference::Name),
+    ))(input)
 }
 
 fn parse_string(input: &str) -> IResult<&str, String, VerboseError<&str>> {
@@ -181,23 +186,19 @@ fn parse_string(input: &str) -> IResult<&str, String, VerboseError<&str>> {
     )(input)
 }
 
-pub fn parse_ref(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
-    alt((
-        parse_hash,
-        parse_name,
-    ))(input)
+#[derive(Clone, Debug, PartialEq)]
+pub enum HashRef {
+    Full(Hash),
+    Prefix(Vec<u8>),
 }
 
 fn parse_type(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     alt((
-        parse_hash,     // #abcd_1234:8
+        map(parse_hash_typeref, TypeReference::to_spec),     // #abcd_1234:8
         parse_product,  // {key: List}
         parse_sum,      // (yes {} | no List)
-        parse_name,     // List
+        map(parse_identifier, TypeSpec::Name),     // List
     ))(input)
-}
-fn parse_name(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
-    map(parse_identifier, TypeSpec::Name)(input)
 }
 
 // TODO: this allows numbers as identifiers. That's kinda good, for
@@ -211,15 +212,25 @@ fn parse_identifier(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
     take_while1(|c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '?' || c == '!' || c == '/')(input)
 }
 
+fn parse_hash_typeref(input: &str) -> IResult<&str, TypeReference, VerboseError<&str>> {
+    map(
+        separated_pair(parse_hash, char(':'), decimal_integer),
+        |(h, cycle)| match h {
+            HashRef::Full(h) => TypeReference::Hash(h, cycle),
+            HashRef::Prefix(bytes) => TypeReference::ShortHash(bytes, cycle),
+        }
+    )(input)
+}
 
-fn parse_hash(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
-    let (rest, (_,bytes,_,cycle)) = tuple((char('#'), hex_bytes, char(':'), decimal_integer))(input)?;
-    // FIXME: error for hashes that are too long
-    if bytes.len() == 32 {
-        Ok((rest, TypeSpec::Hash(Hash::sure_from(&bytes), cycle)))
-    } else {
-        Ok((rest, TypeSpec::ShortHash(bytes, cycle)))
-    }
+fn parse_hash(input: &str) -> IResult<&str, HashRef, VerboseError<&str>> {
+    map(preceded(char('#'), hex_bytes),
+    |bytes| {
+        if bytes.len() == 32 {
+            HashRef::Full(Hash::sure_from(&bytes))
+        } else {
+            HashRef::Prefix(bytes)
+        }
+    })(input)
 }
 
 
@@ -372,14 +383,16 @@ mod tests {
 
     #[test]
     fn test_value_expression() {
-        let input = "TypeRef (variantName {fieldName: {}, fieldName2: (var2 \"stringval\")})";
+        let input = "TypeRef (variantName {field: {}, field2: thing, field3: #abcd, field4: (var2 \"stringval\")})";
         let expected = ValueExpr {
             kind: TypeReference::Name("TypeRef"),
             val:  ValueItem::Variant( VariantDef {
                 label: "variantName",
                 val: Box::new(ValueItem::Fields([
-                    ("fieldName", ValueItem::Fields(Vec::new())),
-                    ("fieldName2", ValueItem::Variant(VariantDef {
+                    ("field", ValueItem::Fields(Vec::new())),
+                    ("field2", ValueItem::Fields(Vec::new())),
+                    ("field3", ValueItem::Fields(Vec::new())),
+                    ("field4", ValueItem::Variant(VariantDef {
                         label: "var2",
                         val: Box::new(ValueItem::Literal(Literal::String("stringval".to_owned()))),
                     })),

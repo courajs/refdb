@@ -92,32 +92,31 @@ fn run_app() -> Result<(), Error> {
             let env = db.get_default_env()?.unwrap();
             let names = env.name_resolutions();
 
-            let spec = match lang::parse_ref(&args[2]) {
+            let spec = match lang::parse_typeref(&args[2]) {
                 Err(_) => bail!("Specify a valid type"),
                 Ok((_,s)) => s
             };
 
-            use lang::TypeSpec;
+            use lang::TypeReference;
             let kind = match spec {
-                TypeSpec::Name(n) => {
+                TypeReference::Name(n) => {
                     match names.get(n) {
                         Some(t) => *t,
                         None => bail!("No type named \"{}\"", n),
                     }
                 },
-                TypeSpec::Hash(h, item) => {
+                TypeReference::Hash(h, item) => {
                     TypeRef {
                         definition: h,
                         item,
                     }
                 },
-                TypeSpec::ShortHash(prefix, item) => {
+                TypeReference::ShortHash(prefix, item) => {
                     TypeRef {
                         definition: db.resolve_hash_prefix(&db.reader(), &prefix)?,
                         item,
                     }
                 },
-                _ => panic!("Shouldn't get here"),
             };
             
             let mut vals = Vec::new();
