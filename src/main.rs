@@ -193,7 +193,18 @@ fn run_app() -> Result<(), Error> {
                 bail!("The following names are already defined: {:?}", dups);
             }
 
-            let new_defs = almost.resolve(&env.name_resolutions(), &HashMap::new());
+            let mut prefix_resolutions: HashMap<&[u8], Hash> = HashMap::new();
+            {
+                let reader = db.reader();
+                for pre in almost.hash_prefixes.iter() {
+                    prefix_resolutions.insert(
+                        pre,
+                        db.resolve_hash_prefix(&reader, pre)?
+                    );
+                }
+            }
+
+            let new_defs = almost.resolve(&env.name_resolutions(), &prefix_resolutions);
 
             let new_label = new_defs.labels;
             let new_rad = RADT {
