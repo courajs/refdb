@@ -49,7 +49,7 @@ pub enum AST<'a> {
     Typedef(&'a str, TypeSpec<'a>),
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TypeSpec<'a> {
     // named type
     Name(&'a str),
@@ -66,7 +66,7 @@ pub enum TypeSpec<'a> {
     Unit,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypeDef<'a>(pub &'a str, pub TypeSpec<'a>);
 
 #[derive(Debug, PartialEq, Clone)]
@@ -322,12 +322,25 @@ pub fn parse_type_definition(input: &str) -> IResult<&str, TypeDef, VerboseError
     )(input)
 }
 
-pub fn parse_statements(input: &str) -> IResult<&str, Vec<TypeDef>, VerboseError<&str>> {
+#[derive(Debug, Clone, PartialEq)]
+pub enum Statement<'a> {
+    TypeDef(TypeDef<'a>),
+    Assignment(ValueAssignment<'a>),
+}
+
+fn parse_statement(input: &str) -> IResult<&str, Statement, VerboseError<&str>> {
+    alt((
+        map(parse_type_definition, Statement::TypeDef),
+        map(parse_value_assignment, Statement::Assignment),
+    ))(input)
+}
+
+pub fn parse_statements(input: &str) -> IResult<&str, Vec<Statement>, VerboseError<&str>> {
     all_consuming(delimited(
         multispace0,
         separated_list(
             squishy(char(';')),
-            parse_type_definition,
+            parse_statement,
         ),
         squishy(opt(char(';'))),
     ))

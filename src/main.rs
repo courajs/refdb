@@ -25,6 +25,7 @@ use crate::types::*;
 use crate::bridge::*;
 use crate::error::MonsterError;
 use crate::eval::Env;
+use crate::lang::*;
 
 use std::ops::Deref;
 
@@ -176,12 +177,21 @@ fn run_app() -> Result<(), Error> {
 
         "store" => {
             let input = args[2].deref();
-            let defs = match lang::parse_statements(input) {
+            let statements = match lang::parse_statements(input) {
                 Err(e) => {
                     bail!("Error parsing input: {:?}", e);
                 },
                 Ok((_,defs)) => defs,
             };
+            let mut defs: Vec<TypeDef> = Vec::new();
+            let mut assignments: Vec<ValueAssignment> = Vec::new();
+            for s in statements {
+                match s {
+                    Statement::TypeDef(d) => defs.push(d),
+                    Statement::Assignment(a) => assignments.push(a),
+                }
+            }
+
             let almost = eval::definitions(&defs)?;
 
             let mut env = db.get_default_env()?.unwrap();
