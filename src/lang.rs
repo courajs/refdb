@@ -7,6 +7,7 @@ use nom::{
         tuple,
         delimited,
         preceded,
+        pair,
         separated_pair,
     },
     branch::alt,
@@ -16,17 +17,19 @@ use nom::{
         escaped_transform,
     },
     character::complete::{
-        alphanumeric0,
+        alpha1,
+        alphanumeric0, alphanumeric1,
         anychar, char,
         one_of, none_of,
         digit1, hex_digit1,
         multispace0, multispace1,
     },
     combinator::{
-        not, map, opt, all_consuming,
+        not, map, opt, all_consuming, recognize,
+        map_parser,
     },
     multi::{
-        many1,
+        many0, many1,
         separated_list,
         separated_nonempty_list,
     },
@@ -100,14 +103,21 @@ pub enum ValueItem<'a> {
     NameRef(&'a str),
     HashRef(Hash),
     ShortHashRef(Vec<u8>),
+    Unit,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ItemSpecifier<'a> {
+    Name(&'a str),
+    Index(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VariantDef<'a> {
-    pub label: &'a str,
+    pub label: ItemSpecifier<'a>,
     pub val: Box<ValueItem<'a>>,
 }
-pub type FieldsDef<'a> = Vec<(&'a str, ValueItem<'a>)>;
+pub type FieldsDef<'a> = Vec<(ItemSpecifier<'a>, ValueItem<'a>)>;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
@@ -146,16 +156,25 @@ fn parse_value_item(input: &str) -> IResult<&str, ValueItem, VerboseError<&str>>
     ))(input)
 }
 
+fn parse_item_specifier(input: &str) -> IResult<&str, ItemSpecifier, VerboseError<&str>> {
+    alt((
+        map(decimal_integer, ItemSpecifier::Index),
+        map(parse_identifier, ItemSpecifier::Name),
+    ))(input)
+}
+
 fn parse_variant(input: &str) -> IResult<&str, VariantDef, VerboseError<&str>> {
     map(tuple((
         char('('),
         multispace0,
-        parse_identifier,
-        multispace1,
-        parse_value_item,
+        parse_item_specifier,
+        opt(preceded(multispace1, parse_value_item)),
         multispace0,
         char(')'),
-    )), |(_,_,label,_,val,_,_)| VariantDef { label, val: Box::new(val) })
+    )), |(_,_,label,val,_,_)| match val {
+        Some(val) => VariantDef { label, val: Box::new(val) },
+        None => VariantDef { label, val: Box::new(ValueItem::Unit) },
+    })
     (input)
 }
 fn parse_fields(input: &str) -> IResult<&str, FieldsDef, VerboseError<&str>> {
@@ -164,7 +183,7 @@ fn parse_fields(input: &str) -> IResult<&str, FieldsDef, VerboseError<&str>> {
         separated_list(
             char(','),
             squishy(separated_pair(
-                parse_identifier,
+                parse_item_specifier,
                 squishy(char(':')),
                 parse_value_item,
             )),
@@ -206,15 +225,18 @@ fn parse_type(input: &str) -> IResult<&str, TypeSpec, VerboseError<&str>> {
     ))(input)
 }
 
-// TODO: this allows numbers as identifiers. That's kinda good, for
-// specifying values of unlabeled types. But it does mean we can't
-// let there ever be a syntactic spot that allows both numbers and
-// identifiers or it will be ambiguous.
-// We should probably just require the first char be non-numeric like
-// everyone else. Then parse variant and field specifiers differently to
-// allow numbers there.
+// TODO: Cleanup
 fn parse_identifier(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
-    take_while1(|c: char| c.is_alphanumeric() || c == '-' || c == '_' || c == '?' || c == '!' || c == '/')(input)
+    recognize(
+        preceded(
+            // initial character is alpha or underscore
+            one_of("_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"),
+            // alt((one_of("_"), alpha1)),
+            // within identifiers we allow more things
+            many0(one_of("_-?!/0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz")),
+        )
+    )
+    (input)
 }
 
 fn parse_hash_typeref(input: &str) -> IResult<&str, TypeReference, VerboseError<&str>> {
@@ -332,6 +354,16 @@ mod tests {
     }
 
     #[test]
+    fn test_identifiers() {
+        let input = "n4_me";
+        assert_eq!(parse_identifier(input).assert(input), input);
+        let input = "_private";
+        assert_eq!(parse_identifier(input).assert(input), input);
+        let input = "89";
+        assert!(parse_identifier(input).is_err());
+    }
+
+    #[test]
     fn simple_type_parsing() {
         let nil = "Nil";
         let short = "#facebabe_00552288:12";
@@ -388,23 +420,27 @@ mod tests {
 
     #[test]
     fn test_value_expression() {
-        let input = "TypeRef (variantName {field: {}, field2: thing, field3: #abcd, field4: (var2 \"stringval\")})";
+        let input = "TypeRef (variantName {field: {}, field2: thing, field3: #abcd, field4: (var2 \"stringval\"), 5: (2)})";
         let expected = ValueExpr {
             kind: TypeReference::Name("TypeRef"),
             val:  ValueItem::Variant( VariantDef {
-                label: "variantName",
+                label: ItemSpecifier::Name("variantName"),
                 val: Box::new(ValueItem::Fields([
-                    ("field", ValueItem::Fields(Vec::new())),
-                    ("field2", ValueItem::NameRef("thing")),
-                    ("field3", ValueItem::ShortHashRef(hex!("abcd").to_vec())),
-                    ("field4", ValueItem::Variant(VariantDef {
-                        label: "var2",
+                    (ItemSpecifier::Name("field"), ValueItem::Fields(Vec::new())),
+                    (ItemSpecifier::Name("field2"), ValueItem::NameRef("thing")),
+                    (ItemSpecifier::Name("field3"), ValueItem::ShortHashRef(hex!("abcd").to_vec())),
+                    (ItemSpecifier::Name("field4"), ValueItem::Variant(VariantDef {
+                        label: ItemSpecifier::Name("var2"),
                         val: Box::new(ValueItem::Literal(Literal::String("stringval".to_owned()))),
+                    })),
+                    (ItemSpecifier::Index(5), ValueItem::Variant(VariantDef {
+                        label: ItemSpecifier::Index(2),
+                        val: Box::new(ValueItem::Unit),
                     })),
                 ].iter().cloned().collect())),
             }),
         };
 
-        assert_eq!(parse_value_expression(input), Ok(("", expected)));
+        assert_eq!(parse_value_expression(input).assert(input), expected);
     }
 }
