@@ -163,6 +163,8 @@ fn run_app() -> Result<(), Error> {
 
             for t in labeled {
                 if let Ok(Item::TypeDef(r)) = db.get(t) {
+                    let ty = Typing { kind: RADT_TYPE_REF, data: r.hash() };
+                    println!("ref: {}", ty.hash());
                     let l = env.labelings.get(&t).unwrap();
                     let s = labels::print_with_env(&r, &env)?;
                     println!("{}", s);

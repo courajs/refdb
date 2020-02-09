@@ -190,7 +190,7 @@ pub enum RADTItem {
     CycleRef(usize),
 }
 
-impl fmt::Display for RADT {
+impl Display for RADT {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         use crate::storage::Storable;
         let t = Typing {kind: RADT_TYPE_REF, data: self.hash() };
@@ -212,7 +212,7 @@ impl fmt::Display for RADT {
     }
 }
 
-impl fmt::Display for RADTItem {
+impl Display for RADTItem {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Self::ExternalType(tr) => write!(f, "{}", tr),
