@@ -86,23 +86,34 @@ pub enum MonsterError {
     HashResolutionConflict(Vec<Hash>),
     #[fail(display = "todo: {}", _0)]
     Todo(&'static str),
+    #[fail(display = "formatted: {}", _0)]
+    Formatted(String),
 }
 
 pub trait AssertParsed<Output> {
+    fn to_result(self, input: &str) -> Result<Output, String>;
     fn assert(self, input: &str) -> Output;
 }
 impl<O> AssertParsed<O> for IResult<&str, O, VerboseError<&str>> {
-    fn assert(self, input: &str) -> O {
+    fn to_result(self, input: &str) -> Result<O, String> {
         match self {
-            Err(nom::Err::Incomplete(i)) => panic!(format!("Failed to parse: Incomplete {:?}", i)),
+            Err(nom::Err::Incomplete(i)) => Err(format!("Failed to parse: Incomplete {:?}", i)),
             Err(nom::Err::Error(e))
-            | Err(nom::Err::Failure(e))   => panic!(format!("Failed to parse:\n{}", nom::error::convert_error(input, e))),
+            | Err(nom::Err::Failure(e))   => Err(format!("Failed to parse:\n{}", nom::error::convert_error(input, e))),
             Ok((rest, val)) => {
                 if rest.input_len() > 0 {
-                    panic!(format!("Parsed with {} bytes of remaining input", rest.input_len()));
+                    Err(format!("Parsed with {} bytes of remaining input", rest.input_len()))
+                } else {
+                    Ok(val)
                 }
-                return val;
             }
+        }
+    }
+
+    fn assert(self, input: &str) -> O {
+        match self.to_result(input) {
+            Ok(o) => o,
+            Err(e) => panic!(e),
         }
     }
 }

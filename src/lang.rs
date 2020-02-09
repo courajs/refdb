@@ -40,6 +40,24 @@ use indoc::indoc as dedent;
 
 use crate::error::AssertParsed;
 use crate::core::Hash;
+use crate::error::*;
+
+pub fn process_statements(input: &str) -> Result<(Vec<TypeDef>, Vec<ValueAssignment>), MonsterError> {
+    match parse_statements(input).to_result(input) {
+        Err(e) => Err(MonsterError::Formatted(e)),
+        Ok(statements) => {
+            let mut defs: Vec<TypeDef> = Vec::new();
+            let mut assignments: Vec<ValueAssignment> = Vec::new();
+            for s in statements {
+                match s {
+                    Statement::TypeDef(d) => defs.push(d),
+                    Statement::Assignment(a) => assignments.push(a),
+                }
+            }
+            Ok((defs, assignments))
+        }
+    }
+}
 
 type Parsed<'a> = IResult<&'a str, AST<'a>, VerboseError<&'a str>>;
 

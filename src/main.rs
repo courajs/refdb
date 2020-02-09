@@ -177,20 +177,7 @@ fn run_app() -> Result<(), Error> {
 
         "store" => {
             let input = args[2].deref();
-            let statements = match lang::parse_statements(input) {
-                Err(e) => {
-                    bail!("Error parsing input: {:?}", e);
-                },
-                Ok((_,defs)) => defs,
-            };
-            let mut defs: Vec<TypeDef> = Vec::new();
-            let mut assignments: Vec<ValueAssignment> = Vec::new();
-            for s in statements {
-                match s {
-                    Statement::TypeDef(d) => defs.push(d),
-                    Statement::Assignment(a) => assignments.push(a),
-                }
-            }
+            let (defs, assignments) = lang::process_statements(input)?;
 
             let almost = eval::definitions(&defs)?;
 
