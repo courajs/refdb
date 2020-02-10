@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::collections::HashMap;
+use std::collections::HashSet;
 
 use failure::Error;
 use failure::bail;
@@ -178,43 +179,123 @@ fn run_app() -> Result<(), Error> {
         },
 
         "store" => {
+            let mut env: Env;
+
             let input = args[2].deref();
             let (defs, assignments) = lang::process_statements(input)?;
 
-            let almost = eval::definitions(&defs)?;
-
-            let mut env = db.get_default_env()?.unwrap();
-
-            let existing_names = env.defined_names();
-
-            let dups: Vec<&str> = almost.defined_names().into_iter().filter(|n| existing_names.contains(n)).collect();
-
-            if dups.len() > 0 {
-                bail!("The following names are already defined: {:?}", dups);
+            if defs.is_empty() && assignments.is_empty() {
+                Err(MonsterError::Formatted("Pass some statements!".to_owned()))?;
             }
 
-            let mut prefix_resolutions: HashMap<&[u8], Hash> = HashMap::new();
-            {
-                let reader = db.reader();
-                for pre in almost.hash_prefixes.iter() {
-                    prefix_resolutions.insert(
-                        pre,
-                        db.resolve_hash_prefix(&reader, pre)?
-                    );
+            let mut radts: HashMap<Hash, RADT> = HashMap::new();
+            let mut new_radt: Option<(Hash, RADT)> = None;
+            if !defs.is_empty() {
+                let almost = eval::definitions(&defs)?;
+
+                env = db.get_default_env()?.unwrap();
+                let existing_names = env.defined_names();
+
+                let dups: Vec<&str> = almost.defined_names().into_iter().filter(|n| existing_names.contains(n)).collect();
+
+                if dups.len() > 0 {
+                    bail!("The following names are already defined: {:?}", dups);
                 }
+
+                let mut prefix_resolutions: HashMap<&[u8], Hash> = HashMap::new();
+                {
+                    let reader = db.reader();
+                    for pre in almost.hash_prefixes.iter() {
+                        prefix_resolutions.insert(
+                            pre,
+                            db.resolve_hash_prefix(&reader, pre)?
+                        );
+                    }
+                }
+
+                let new_defs = almost.resolve(&env.name_resolutions(), &prefix_resolutions);
+
+                let new_label = new_defs.labels;
+                let new_rad = RADT {
+                    uniqueness: rand::random(),
+                    items: new_defs.types,
+                };
+                let typing = Typing {
+                    kind: RADT_TYPE_REF,
+                    data: new_rad.hash(),
+                };
+                let new_hash = typing.hash();
+
+                env.labelings.insert(new_hash, new_label);
+                new_radt = Some((new_hash, new_rad.clone()));
+                radts.insert(new_hash, new_rad);
+            } else {
+                env = db.get_default_env()?.unwrap();
+                println!("empty");
             }
 
-            let new_defs = almost.resolve(&env.name_resolutions(), &prefix_resolutions);
 
-            let new_label = new_defs.labels;
-            let new_rad = RADT {
-                uniqueness: rand::random(),
-                items: new_defs.types,
-            };
+
+            {
+                let mut names: HashSet<&str> = HashSet::new();
+                let mut hashes: HashSet<TypeRef> = HashSet::new();
+                let mut short_hashes: HashSet<(Vec<u8>, usize)> = HashSet::new();
+                for a in assignments.iter() {
+                    match &a.val.kind {
+                        TypeReference::Name(n) => names.insert(n),
+                        TypeReference::Hash(h, item) => hashes.insert(TypeRef{definition: *h, item: *item}),
+                        TypeReference::ShortHash(pre, item) => short_hashes.insert((pre.clone(),*item)),
+                    };
+                }
+
+                let mut radts_to_fetch: HashSet<Hash> = hashes.iter().map(|r| r.definition).collect();
+
+
+                let name_lookups = env.name_resolutions();
+                for n in names {
+                    match name_lookups.get(n) {
+                        Some(TypeRef{definition,..}) => {radts_to_fetch.insert(*definition);},
+                        None => Err(MonsterError::Formatted(format!("Name not found: \"{}\"", n)))?,
+                    }
+                }
+                {
+                    let reader = db.reader();
+                    for (pre,_) in short_hashes.iter() {
+                        let h = match db.resolve_hash_prefix(&reader, pre) {
+                            Ok(h) => h,
+                            Err(MonsterError::HashResolutionNotFound) => {
+                                Err(MonsterError::Formatted(format!("No type found for prefix #{}", hex::encode(pre))))?;
+                                unreachable!();
+                            },
+                            Err(e) => {
+                                Err(e)?;
+                                unreachable!();
+                            }
+                        };
+                        radts_to_fetch.insert(h);
+                    }
+                }
+
+                if let Some((h,_)) = &new_radt {
+                    radts_to_fetch.remove(h);
+                }
+
+                for h in radts_to_fetch {
+                    let item = db.get(h)?;
+                    if let Item::TypeDef(r) = item {
+                        radts.insert(h, r);
+                    } else {
+                        Err(MonsterError::Formatted(format!("{} was not a type: {:?}", h, item)))?;
+                    }
+                }
+
+                dbg!(radts);
+            }
+
             
-            let new_hash = db.put_item(&Item::TypeDef(new_rad))?;
-
-            env.labelings.insert(new_hash, new_label);
+            if let Some((_,rad)) = new_radt {
+                db.put_item(&Item::TypeDef(rad))?;
+            }
             db.update_default_env(&env)?;
         },
 

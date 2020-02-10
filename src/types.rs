@@ -54,7 +54,7 @@ pub struct TypedValue {
     pub value: RADTValue,
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct TypeRef {
     pub definition: Hash,
     pub item: usize,

@@ -86,7 +86,7 @@ pub enum MonsterError {
     HashResolutionConflict(Vec<Hash>),
     #[fail(display = "todo: {}", _0)]
     Todo(&'static str),
-    #[fail(display = "formatted: {}", _0)]
+    #[fail(display = "{}", _0)]
     Formatted(String),
 }
 
