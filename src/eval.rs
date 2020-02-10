@@ -92,6 +92,48 @@ fn process_spec<'a>(spec: &'a TypeSpec, refs: &HashMap<&str, usize>, ex_names: &
     }
 }
 
+use crate::types::*;
+use crate::labels::*;
+#[derive(Debug, Clone, PartialEq)]
+pub struct LabeledRADT {
+    pub uniqueness: [u8; 16],
+    pub items: Vec<(String, LabeledRADTItem)>,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub enum LabeledRADTItem {
+    ExternalType(TypeRef),
+    Sum(Vec<(String, LabeledRADTItem)>),
+    Product(Vec<(String, LabeledRADTItem)>),
+    CycleRef(usize),
+}
+impl LabeledRADT {
+    fn new(radt: &RADT, labels: &LabelSet) -> LabeledRADT {
+        Self::_new(radt, labels).expect("This label doesn't apply to this RADT")
+    }
+    fn _new(radt: &RADT, labels: &LabelSet) -> Result<LabeledRADT, ()> {
+        fn make_item(base: &[RADTItem], base_labels: &[Label], item: &RADTItem, label: &LabeledItem) -> Result<LabeledRADTItem, ()> {
+            todo!();
+        }
+
+        if radt.items.len() != labels.0.len() {
+            return Err(())
+        }
+        let items = radt.items.iter().zip(labels.0.iter()).try_fold(
+            Vec::with_capacity(labels.0.len()),
+            |mut v, (item, label)| { v.push((label.name.clone(), make_item(&radt.items, &labels.0, item, &label.item)?)); Ok(v) }
+        );
+
+        items.map(|items| LabeledRADT {
+            uniqueness: radt.uniqueness.clone(),
+            items,
+        })
+    }
+}
+
+// pub fn eval_value_expression(expr: &ValueItem, names: &HashMap<&str, Hash>, prefix_resolutions: &HashMap<&[u8], Hash>, base_labels: &[Label]) -> (TypedValue, HashMap<Hash, TypedValue>) {
+//     todo!();
+// }
+
 #[derive(Debug, PartialEq, Eq)]
 pub struct Env {
     // type -> labeling
@@ -351,4 +393,18 @@ mod tests {
             }
         }
     }
+
+    /*
+    #[test]
+    fn test_eval_value_expr() {
+        let input = "TypeRef (variantName {field: {}, field2: thing, field3: #abcd, field4: (var2 \"stringval\"), 5: (2)})";
+        let item = crate::lang::parse_value_expression(input).assert(input).val;
+        
+
+        let expected = RADTValue::Sum {
+            kind
+        };
+        eval_value_expression
+    }
+    */
 }
