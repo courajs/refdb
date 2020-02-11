@@ -138,7 +138,7 @@ impl Decodable for Typing {
 // same structure as Typing, but the Hash fields mean different things.
 // For typing, that's the hash of the blob containing the value. For this
 // one, it's a hash which should point to a typing of the same type.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct ExpectedTyping {
     pub reference: Hash,
     pub kind: TypeRef,
