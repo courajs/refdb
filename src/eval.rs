@@ -112,7 +112,29 @@ impl LabeledRADT {
     }
     fn _new(radt: &RADT, labels: &LabelSet) -> Result<LabeledRADT, ()> {
         fn make_item(base: &[RADTItem], base_labels: &[Label], item: &RADTItem, label: &LabeledItem) -> Result<LabeledRADTItem, ()> {
-            todo!();
+            match (item, label) {
+                (RADTItem::CycleRef(idx),         LabeledItem::Type) => Ok(LabeledRADTItem::CycleRef(*idx)),
+                (RADTItem::ExternalType(typeref), LabeledItem::Type) => Ok(LabeledRADTItem::ExternalType(typeref.clone())),
+                (RADTItem::Sum(variants),         LabeledItem::Sum(variant_labels)) => {
+                    if variants.len() != variant_labels.len() {
+                        return Err(())
+                    }
+                    variants.iter().zip(variant_labels.iter()).try_fold(
+                        Vec::with_capacity(variants.len()),
+                        |mut v, (rad_item, label)| { v.push((label.name.clone(), make_item(base, base_labels, rad_item, &label.item)?)); Ok(v) }
+                    ).map(LabeledRADTItem::Sum)
+                },
+                (RADTItem::Product(fields),     LabeledItem::Product(field_labels)) => {
+                    if fields.len() != field_labels.len() {
+                        return Err(())
+                    }
+                    fields.iter().zip(field_labels.iter()).try_fold(
+                        Vec::with_capacity(fields.len()),
+                        |mut v, (rad_item, label)| { v.push((label.name.clone(), make_item(base, base_labels, rad_item, &label.item)?)); Ok(v) }
+                    ).map(LabeledRADTItem::Product)
+                },
+                _ => Err(()),
+            }
         }
 
         if radt.items.len() != labels.0.len() {
@@ -392,6 +414,81 @@ mod tests {
                 assert_eq!(e.to_string(), "The following definitions were made multiple times: [\"thing\"]");
             }
         }
+    }
+
+    #[test]
+    fn foo() {
+        
+        let t = RADT {
+            uniqueness: [0; 16],
+            items: vec![
+                // nil
+                RADTItem::Product(Vec::new()),
+                // cons
+                RADTItem::Product(vec![
+                    RADTItem::ExternalType(TypeRef {
+                        definition: BLOB_TYPE_HASH,
+                        item: 0,
+                    }),
+                    RADTItem::ExternalType(TypeRef {
+                        definition: RADT_TYPE_HASH,
+                        item: 0,
+                    }),
+                    RADTItem::ExternalType(TypeRef {
+                        definition: Hash([1; 32]),
+                        item: 12,
+                    }),
+                    RADTItem::CycleRef(2),
+                ]),
+                // list
+                RADTItem::Sum(vec![RADTItem::CycleRef(1), RADTItem::CycleRef(0)]),
+            ],
+        };
+
+        let l = LabelSet(vec![
+            Label {
+                name: String::from("Nil"),
+                item: LabeledItem::Product(Vec::new()),
+            },
+            Label {
+                name: String::from("Cons"),
+                item: LabeledItem::Product(vec![
+                    Label {
+                        name: String::from("head1"),
+                        item: LabeledItem::Type,
+                    },
+                    Label {
+                        name: String::from("head2"),
+                        item: LabeledItem::Type,
+                    },
+                    Label {
+                        name: String::from("head3"),
+                        item: LabeledItem::Type,
+                    },
+                    Label {
+                        name: String::from("tail"),
+                        item: LabeledItem::Type,
+                    },
+                ]),
+            },
+            Label {
+                name: String::from("BlobList"),
+                item: LabeledItem::Sum(vec![
+                    Label {
+                        name: String::from("cons"),
+                        item: LabeledItem::Type,
+                    },
+                    Label {
+                        name: String::from("nil"),
+                        item: LabeledItem::Type,
+                    },
+                ]),
+            },
+        ]);
+
+        let result = LabeledRADT::new(&t, &l);
+        dbg!(result);
+        // todo!();
     }
 
     /*
