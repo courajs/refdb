@@ -13,6 +13,7 @@ use nom::{
 
 use crate::core::*;
 use crate::error::MonsterError;
+use crate::storage::Storable;
 
 pub const BLOB_TYPE_HASH: Hash = Hash(hex!(
     "00000000 00000000 00000000 00000000 00000000 00000000 00000000 00000000"
@@ -53,11 +54,27 @@ pub struct TypedValue {
     pub kind: TypeRef,
     pub value: RADTValue,
 }
+impl TypedValue {
+    fn typing(&self) -> Typing {
+        Typing {
+            kind: self.kind.clone(),
+            data: self.value.hash(),
+        }
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
 pub struct TypeRef {
     pub definition: Hash,
     pub item: usize,
+}
+impl TypeRef {
+    fn value(&self, val: RADTValue) -> TypedValue {
+        TypedValue {
+            kind: *self,
+            value: val,
+        }
+    }
 }
 impl Serializable for TypeRef {
     fn bytes_into(&self, v: &mut Vec<u8>) {
@@ -467,6 +484,18 @@ impl Decodable for RADTItem {
     }
 }
 impl RADT {
+    fn typing(&self) -> Typing {
+        Typing {
+            kind: RADT_TYPE_REF,
+            data: self.hash(),
+        }
+    }
+    fn item_ref(&self, item: usize) -> TypeRef {
+        TypeRef {
+            definition: self.typing().hash(),
+            item,
+        }
+    }
     fn normalize(&mut self) -> Vec<usize> {
         // theoretically there should be a much better impl with no clones and simple swaps
         // but that is for another day
