@@ -216,10 +216,6 @@ pub fn validate_instantiate(
                 // ensure fields is empty, then return an empty product
                 todo!("product (unit)");
             },
-            (LabeledRADTItem::Product(type_fields), ValueItem::Fields(value_fields)) => {
-                // ensure they're the same length, delegate each
-                todo!("product");
-            },
             (LabeledRADTItem::Sum(type_variants), ValueItem::Variant(value_variant)) => {
                 // ensure a valid variant, recurse for the inner value
                 let discriminant = match &value_variant.label {
@@ -238,6 +234,36 @@ pub fn validate_instantiate(
                 } else {
                     Err(MonsterError::Todo("out of range variant discriminant"))
                 }
+            },
+            (LabeledRADTItem::Product(type_fields), ValueItem::Fields(value_fields)) => {
+                // ensure they're the same length,
+                // resolve each name specifier,
+                // recurse for each inner value
+                if type_fields.len() != value_fields.len() {
+                    return Err(MonsterError::Todo("wrong number of fields in product"));
+                }
+                let mut provided_items: Vec<(usize, &ValueItem)> = Vec::with_capacity(value_fields.len());
+                for (spec, val) in value_fields.iter() {
+                    match spec {
+                        ItemSpecifier::Index(i) => provided_items.push((*i, val)),
+                        ItemSpecifier::Name(n) => provided_items.push((find_specifier(*n, &type_fields)?, val)),
+                    }
+                }
+
+                provided_items.sort_by_key(|i|i.0);
+                for i in 0..provided_items.len() {
+                    if i != provided_items[i].0 {
+                        dbg!(provided_items);
+                        return Err(MonsterError::Todo("field specified twice in product"))
+                    }
+                }
+
+
+                let mut produced_items: Vec<RADTValue> = Vec::with_capacity(provided_items.len());
+                for (i, inner) in provided_items {
+                    produced_items.push(make_item(&type_fields[i].1, inner, full_type, names, prefix_resolutions, deps, expects)?);
+                }
+                Ok(RADTValue::Product(produced_items))
             },
             (LabeledRADTItem::CycleRef(idx), _) => {
                 // recurse with the proper referenced radt_item
@@ -603,7 +629,7 @@ mod tests {
         use crate::storage::*;
         let (_, string) = String::radt();
         let thingtype = TypeRef { definition: Hash::of(b"owl"), item: 3 };
-        let input = "TypeRef (variantName {field: {}, field2: thing, field3: #abcd, field4: (var2 \"stringval\"), 5: (2)})";
+        let input = "TypeRef (variantName {field1: thing, field2: #abcd, field0: {}, 4: (2), field3: (var2 \"stringval\")})";
         let kind = LabeledRADT {
             uniqueness: [0;16],
             items: vec![
@@ -614,11 +640,11 @@ mod tests {
                     ("by_number".to_string(), CycleRef(0)),
                 ])),
                 ("Product".to_string(), Product(vec![
+                    ("field0".to_string(), CycleRef(0)),
+                    ("field1".to_string(), ExternalType(thingtype)),
                     ("field2".to_string(), ExternalType(thingtype)),
-                    ("field3".to_string(), ExternalType(thingtype)),
-                    ("field".to_string(), CycleRef(0)),
-                    ("field4".to_string(), CycleRef(1)),
-                    ("also_by_number".to_string(), CycleRef(0)),
+                    ("field3".to_string(), CycleRef(1)),
+                    ("also_by_number".to_string(), CycleRef(1)),
                 ])),
             ],
         };
@@ -653,9 +679,9 @@ mod tests {
                 value: RADTValue::Sum {
                     kind: 0,
                     value: Box::new(RADTValue::Product(vec![
+                        RADTValue::Product(Vec::new()),
                         RADTValue::Hash(Hash::of(b"dog")),
                         RADTValue::Hash(Hash::of(b"cat")),
-                        RADTValue::Product(Vec::new()),
                         RADTValue::Sum {
                             kind: 1,
                             value: Box::new(RADTValue::Hash(string_hash)),
