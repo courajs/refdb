@@ -195,26 +195,55 @@ pub fn validate_instantiate(
         deps: &mut Vec<crate::storage::Item>,
         expects: &mut HashSet<ExpectedTyping>,
     ) -> Result<RADTValue, MonsterError> {
+        use crate::bridge::Bridged;
+        use crate::storage::{Item, Storable};
         match (radt_item, ast_item) {
             (LabeledRADTItem::ExternalType(stringref), ValueItem::Literal(Literal::String(s))) => {
                 // make the string, add it to deps, and return a Hash to it
-                todo!("literal");
+                // todo!("literal");
+                let (string, string_deps) = s.to_value();
+                let h = string.typing().hash();
+                deps.push(Item::Value(string));
+                deps.extend(string_deps);
+                Ok(RADTValue::Hash(h))
             },
-            (LabeledRADTItem::ExternalType(t), ValueItem::HashRef(name)) => {
-                // add to expectations, return a Hash to it
-                todo!("full hash ref");
+            (LabeledRADTItem::ExternalType(t), ValueItem::HashRef(h)) => {
+                expects.insert(ExpectedTyping {
+                    reference: *h,
+                    kind: *t,
+                });
+                Ok(RADTValue::Hash(*h))
             },
             (LabeledRADTItem::ExternalType(t), ValueItem::NameRef(name)) => {
                 // resolve the name, add to expectations, return a Hash to it
-                todo!("name ref");
+                if let Some(h) = names.get(name) {
+                    expects.insert(ExpectedTyping {
+                        reference: *h,
+                        kind: *t,
+                    });
+                    Ok(RADTValue::Hash(*h))
+                } else {
+                    Err(MonsterError::Todo("name used isn't in environment"))
+                }
             },
             (LabeledRADTItem::ExternalType(t), ValueItem::ShortHashRef(prefix)) => {
-                // resolve the prefix, add to expectations, return a Hash to it
-                todo!("short hash ref");
+                if let Some(h) = prefix_resolutions.get(&prefix[..]) {
+                    expects.insert(ExpectedTyping {
+                        reference: *h,
+                        kind: *t,
+                    });
+                    Ok(RADTValue::Hash(*h))
+                } else {
+                    Err(MonsterError::Todo("hash prefix wasn't found in environment"))
+                }
             },
             (LabeledRADTItem::Product(fields), ValueItem::Unit) => {
                 // ensure fields is empty, then return an empty product
-                todo!("product (unit)");
+                if fields.len() == 0 {
+                    Ok(RADTValue::Product(Vec::new()))
+                } else {
+                    Err(MonsterError::Todo("unit for non-empty product"))
+                }
             },
             (LabeledRADTItem::Sum(type_variants), ValueItem::Variant(value_variant)) => {
                 // ensure a valid variant, recurse for the inner value
