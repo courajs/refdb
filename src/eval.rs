@@ -198,31 +198,46 @@ pub fn validate_instantiate(
         match (radt_item, ast_item) {
             (LabeledRADTItem::ExternalType(stringref), ValueItem::Literal(Literal::String(s))) => {
                 // make the string, add it to deps, and return a Hash to it
-                todo!();
+                todo!("literal");
             },
             (LabeledRADTItem::ExternalType(t), ValueItem::HashRef(name)) => {
                 // add to expectations, return a Hash to it
-                todo!();
+                todo!("full hash ref");
             },
             (LabeledRADTItem::ExternalType(t), ValueItem::NameRef(name)) => {
                 // resolve the name, add to expectations, return a Hash to it
-                todo!();
+                todo!("name ref");
             },
             (LabeledRADTItem::ExternalType(t), ValueItem::ShortHashRef(prefix)) => {
                 // resolve the prefix, add to expectations, return a Hash to it
-                todo!();
+                todo!("short hash ref");
             },
             (LabeledRADTItem::Product(fields), ValueItem::Unit) => {
                 // ensure fields is empty, then return an empty product
-                todo!();
+                todo!("product (unit)");
             },
             (LabeledRADTItem::Product(type_fields), ValueItem::Fields(value_fields)) => {
                 // ensure they're the same length, delegate each
-                todo!();
+                todo!("product");
             },
             (LabeledRADTItem::Sum(type_variants), ValueItem::Variant(value_variant)) => {
                 // ensure a valid variant, recurse for the inner value
-                todo!();
+                let discriminant = match &value_variant.label {
+                    ItemSpecifier::Index(i) => *i,
+                    ItemSpecifier::Name(n) => {
+                        find_specifier(*n, type_variants)?
+                    },
+                };
+                if discriminant < type_variants.len() {
+                    Ok(RADTValue::Sum {
+                        kind: discriminant as u8,
+                        value: Box::new(
+                            make_item(&type_variants[discriminant].1, &value_variant.val, full_type, names, prefix_resolutions, deps, expects)?
+                        ),
+                    })
+                } else {
+                    Err(MonsterError::Todo("out of range variant discriminant"))
+                }
             },
             (LabeledRADTItem::CycleRef(idx), _) => {
                 // recurse with the proper referenced radt_item
@@ -238,9 +253,10 @@ pub fn validate_instantiate(
     Ok((TypedValue { kind: typeref, value }, deps, expects))
 }
 
-// pub fn eval_value_expression(expr: &ValueItem, names: &HashMap<&str, Hash>, prefix_resolutions: &HashMap<&[u8], Hash>, base_labels: &[Label]) -> (TypedValue, HashMap<Hash, TypedValue>) {
-//     todo!();
-// }
+fn find_specifier<O, Z: PartialEq + ?Sized, K: std::borrow::Borrow<Z>>(spec: &Z, values: &[(K, O)]) -> Result<usize, MonsterError> {
+    values.iter().position(|(k,_)| spec == k.borrow()).ok_or(MonsterError::Todo("specifier not found"))
+}
+
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Env {
