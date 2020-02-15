@@ -177,7 +177,8 @@ impl LabeledRADT {
 pub fn validate_instantiate(
     expr: &ValueItem,
     kind: &LabeledRADT,
-    name: &HashMap<&str, Hash>,
+    item: usize,
+    names: &HashMap<&str, Hash>,
     prefix_resolutions: &HashMap<&[u8], Hash>
 ) -> Result<(TypedValue, Vec<crate::storage::Item>, HashSet<ExpectedTyping>), MonsterError> {
     use crate::bridge::Bridged;
@@ -185,39 +186,56 @@ pub fn validate_instantiate(
     let mut expects = HashSet::new();
     let (_, stringref) = String::radt();
 
-    let make_item = |radt_item, ast_item| {
+    fn make_item (
+        radt_item: &LabeledRADTItem,
+        ast_item: &ValueItem,
+        full_type: &LabeledRADT,
+        names: &HashMap<&str, Hash>,
+        prefix_resolutions: &HashMap<&[u8], Hash>,
+        deps: &mut Vec<crate::storage::Item>,
+        expects: &mut HashSet<ExpectedTyping>,
+    ) -> Result<RADTValue, MonsterError> {
         match (radt_item, ast_item) {
             (LabeledRADTItem::ExternalType(stringref), ValueItem::Literal(Literal::String(s))) => {
                 // make the string, add it to deps, and return a Hash to it
+                todo!();
             },
             (LabeledRADTItem::ExternalType(t), ValueItem::HashRef(name)) => {
                 // add to expectations, return a Hash to it
+                todo!();
             },
             (LabeledRADTItem::ExternalType(t), ValueItem::NameRef(name)) => {
                 // resolve the name, add to expectations, return a Hash to it
+                todo!();
             },
             (LabeledRADTItem::ExternalType(t), ValueItem::ShortHashRef(prefix)) => {
                 // resolve the prefix, add to expectations, return a Hash to it
+                todo!();
             },
             (LabeledRADTItem::Product(fields), ValueItem::Unit) => {
                 // ensure fields is empty, then return an empty product
+                todo!();
             },
             (LabeledRADTItem::Product(type_fields), ValueItem::Fields(value_fields)) => {
                 // ensure they're the same length, delegate each
+                todo!();
             },
             (LabeledRADTItem::Sum(type_variants), ValueItem::Variant(value_variant)) => {
                 // ensure a valid variant, recurse for the inner value
+                todo!();
             },
             (LabeledRADTItem::CycleRef(idx), _) => {
                 // recurse with the proper referenced radt_item
-                return Ok(RADTValue::Hash(Hash::of(b"dog")));
+                make_item(&full_type.items[*idx].1, ast_item, full_type, names, prefix_resolutions, deps, expects)
             },
-            _ => return Err(MonsterError::Todo("thing doesn't match the type")),
-        };
-        todo!();
-    };
+            _ => Err(MonsterError::Todo("thing doesn't match the type")),
+        }
+    }
 
-    Ok((todo!(), deps, expects))
+    let value = make_item(&kind.items[item].1, expr, kind, names, prefix_resolutions, &mut deps, &mut expects)?;
+    let typeref = kind.radt().item_ref(item);
+
+    Ok((TypedValue { kind: typeref, value }, deps, expects))
 }
 
 // pub fn eval_value_expression(expr: &ValueItem, names: &HashMap<&str, Hash>, prefix_resolutions: &HashMap<&[u8], Hash>, base_labels: &[Label]) -> (TypedValue, HashMap<Hash, TypedValue>) {
@@ -649,6 +667,7 @@ mod tests {
             validate_instantiate(
                 &item,
                 &kind,
+                1,
                 &resolved_names,
                 &resolved_hashes,
             ).expect("this should work"),
