@@ -180,9 +180,9 @@ pub fn validate_instantiate(
     item: usize,
     names: &HashMap<&str, Hash>,
     prefix_resolutions: &HashMap<&[u8], Hash>
-) -> Result<(TypedValue, Vec<crate::storage::Item>, HashSet<ExpectedTyping>), MonsterError> {
+) -> Result<(TypedValue, HashSet<crate::storage::Item>, HashSet<ExpectedTyping>), MonsterError> {
     use crate::bridge::Bridged;
-    let mut deps = Vec::new();
+    let mut deps = HashSet::new();
     let mut expects = HashSet::new();
     let (_, stringref) = String::radt();
 
@@ -192,7 +192,7 @@ pub fn validate_instantiate(
         full_type: &LabeledRADT,
         names: &HashMap<&str, Hash>,
         prefix_resolutions: &HashMap<&[u8], Hash>,
-        deps: &mut Vec<crate::storage::Item>,
+        deps: &mut HashSet<crate::storage::Item>,
         expects: &mut HashSet<ExpectedTyping>,
     ) -> Result<RADTValue, MonsterError> {
         use crate::bridge::Bridged;
@@ -203,7 +203,7 @@ pub fn validate_instantiate(
                 // todo!("literal");
                 let (string, string_deps) = s.to_value();
                 let h = string.typing().hash();
-                deps.push(Item::Value(string));
+                deps.insert(Item::Value(string));
                 deps.extend(string_deps);
                 Ok(RADTValue::Hash(h))
             },
@@ -722,7 +722,7 @@ mod tests {
                     ])),
                 },
             },
-            deps,
+            deps.into_iter().collect(),
             expected_deps,
         );
 

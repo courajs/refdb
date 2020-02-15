@@ -64,7 +64,7 @@ impl Decodable for Hash {
     }
 }
 
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq, Hash)]
 pub struct Blob {
     pub bytes: Vec<u8>,
 }

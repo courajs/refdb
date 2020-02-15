@@ -49,7 +49,7 @@ impl TypeSpec<'_> {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub struct TypedValue {
     pub kind: TypeRef,
     pub value: RADTValue,
@@ -171,7 +171,7 @@ fn parse_hash(bytes: &[u8]) -> Result<Hash, MonsterError> {
 
 // recursive algebraic data type
 // allows cyclical references
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct RADT {
     pub uniqueness: [u8; 16],
     pub items: Vec<RADTItem>,
@@ -198,7 +198,7 @@ impl Decodable for RADT {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum RADTItem {
     // Reference to a separate RADT - the hash and cycle index.
     ExternalType(TypeRef),
@@ -264,7 +264,7 @@ impl Display for RADTItem {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Hash)]
 pub enum RADTValue {
     Hash(Hash),
     Sum { kind: u8, value: Box<RADTValue> },
