@@ -46,7 +46,7 @@ pub struct Db<'a> {
     pub store: &'a rkv::SingleStore,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum Item {
     Blob(Blob),
     BlobRef(Hash),

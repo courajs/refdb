@@ -2,10 +2,14 @@ use std::collections::HashSet;
 use std::collections::HashMap;
 
 use crate::lang::AST;
-use crate::error::MonsterError;
+use crate::error::*;
 use crate::core::Hash;
 use crate::types::TypeRef;
-use crate::lang::{TypeDef, TypeSpec, ValueExpr, ValueItem};
+use crate::lang::{
+    TypeSpec, TypeDef,
+    ValueExpr, ValueItem,
+    VariantDef, FieldsDef, ItemSpecifier, Literal,
+};
 use crate::types::RADTItem;
 use crate::labels::LabelSet;
 use crate::labels::Label;
@@ -170,8 +174,50 @@ impl LabeledRADT {
     }
 }
 
-pub fn validate_instantiate(expr: &ValueItem, kind: &LabeledRADT, name: &HashMap<&str, Hash>, prefix_resolutions: &HashMap<&[u8], Hash>) -> Result<(TypedValue, Vec<TypedValue>, HashSet<ExpectedTyping>), MonsterError> {
-    todo!();
+pub fn validate_instantiate(
+    expr: &ValueItem,
+    kind: &LabeledRADT,
+    name: &HashMap<&str, Hash>,
+    prefix_resolutions: &HashMap<&[u8], Hash>
+) -> Result<(TypedValue, Vec<crate::storage::Item>, HashSet<ExpectedTyping>), MonsterError> {
+    use crate::bridge::Bridged;
+    let mut deps = Vec::new();
+    let mut expects = HashSet::new();
+    let (_, stringref) = String::radt();
+
+    let make_item = |radt_item, ast_item| {
+        match (radt_item, ast_item) {
+            (LabeledRADTItem::ExternalType(stringref), ValueItem::Literal(Literal::String(s))) => {
+                // make the string, add it to deps, and return a Hash to it
+            },
+            (LabeledRADTItem::ExternalType(t), ValueItem::HashRef(name)) => {
+                // add to expectations, return a Hash to it
+            },
+            (LabeledRADTItem::ExternalType(t), ValueItem::NameRef(name)) => {
+                // resolve the name, add to expectations, return a Hash to it
+            },
+            (LabeledRADTItem::ExternalType(t), ValueItem::ShortHashRef(prefix)) => {
+                // resolve the prefix, add to expectations, return a Hash to it
+            },
+            (LabeledRADTItem::Product(fields), ValueItem::Unit) => {
+                // ensure fields is empty, then return an empty product
+            },
+            (LabeledRADTItem::Product(type_fields), ValueItem::Fields(value_fields)) => {
+                // ensure they're the same length, delegate each
+            },
+            (LabeledRADTItem::Sum(type_variants), ValueItem::Variant(value_variant)) => {
+                // ensure a valid variant, recurse for the inner value
+            },
+            (LabeledRADTItem::CycleRef(idx), _) => {
+                // recurse with the proper referenced radt_item
+                return Ok(RADTValue::Hash(Hash::of(b"dog")));
+            },
+            _ => return Err(MonsterError::Todo("thing doesn't match the type")),
+        };
+        todo!();
+    };
+
+    Ok((todo!(), deps, expects))
 }
 
 // pub fn eval_value_expression(expr: &ValueItem, names: &HashMap<&str, Hash>, prefix_resolutions: &HashMap<&[u8], Hash>, base_labels: &[Label]) -> (TypedValue, HashMap<Hash, TypedValue>) {
@@ -515,26 +561,28 @@ mod tests {
         // todo!();
     }
 
-    /*
     #[test]
     fn test_eval_value_expr() {
         use LabeledRADTItem::*;
+        use crate::bridge::Bridged;
+        use hex_literal::hex;
+        use crate::storage::*;
         let (_, string) = String::radt();
         let thingtype = TypeRef { definition: Hash::of(b"owl"), item: 3 };
         let input = "TypeRef (variantName {field: {}, field2: thing, field3: #abcd, field4: (var2 \"stringval\"), 5: (2)})";
-        let kind = LabeledType {
+        let kind = LabeledRADT {
             uniqueness: [0;16],
             items: vec![
                 ("Nil".to_string(), Product(Vec::new())),
                 ("Sum".to_string(), Sum(vec![
-                    ("variantName".to_string(), CycleRef(2))
+                    ("variantName".to_string(), CycleRef(2)),
                     ("var2".to_string(), ExternalType(string)),
-                    ("by_number", CycleRef(0)),
-                ]),
+                    ("by_number".to_string(), CycleRef(0)),
+                ])),
                 ("Product".to_string(), Product(vec![
-                    ("field".to_string(), CycleRef(0)),
                     ("field2".to_string(), ExternalType(thingtype)),
                     ("field3".to_string(), ExternalType(thingtype)),
+                    ("field".to_string(), CycleRef(0)),
                     ("field4".to_string(), CycleRef(1)),
                     ("also_by_number".to_string(), CycleRef(0)),
                 ])),
@@ -542,13 +590,69 @@ mod tests {
         };
         let item = crate::lang::parse_value_expression(input).assert(input).val;
 
+        let resolved_names: HashMap<&str, Hash> = [
+            ("thing", Hash::of(b"dog")),
+        ].iter().cloned().collect();
+        let resolved_hashes: HashMap<&[u8], Hash> = [
+            (&hex!("abcd")[..], Hash::of(b"cat")),
+        ].iter().cloned().collect();
+
+        let (string, mut deps) = String::from("stringval").to_value();
+        let string_hash = string.typing().hash();
+        deps.push(Item::Value(string));
+
+        let expected_deps: HashSet<ExpectedTyping> = vec![
+            ExpectedTyping {
+                reference: Hash::of(b"dog"),
+                kind: thingtype,
+            },
+            ExpectedTyping {
+                reference: Hash::of(b"cat"),
+                kind: thingtype,
+            },
+        ].into_iter().collect();
+
+        // the value, the string dependency, and expected typings for thing and #abcd
         let expected = (
             TypedValue {
-                kind: typeref,
-                value: RADTValue
-            }
+                kind: kind.radt().item_ref(1),
+                value: RADTValue::Sum {
+                    kind: 0,
+                    value: Box::new(RADTValue::Product(vec![
+                        RADTValue::Hash(Hash::of(b"dog")),
+                        RADTValue::Hash(Hash::of(b"cat")),
+                        RADTValue::Product(Vec::new()),
+                        RADTValue::Sum {
+                            kind: 1,
+                            value: Box::new(RADTValue::Hash(string_hash)),
+                        },
+                        RADTValue::Sum {
+                            kind: 2,
+                            value: Box::new(RADTValue::Product(Vec::new())),
+                        },
+                    ])),
+                },
+            },
+            deps,
+            expected_deps,
         );
-        eval_value_expression
+
+        // pub fn validate_instantiate(
+        //     expr: &ValueItem,
+        //     kind: &LabeledRADT,
+        //     name: &HashMap<&str, Hash>,
+        //     prefix_resolutions: &HashMap<&[u8], Hash>
+        // ) -> Result<(TypedValue, Vec<TypedValue>, HashSet<ExpectedTyping>),
+        //     MonsterError> {
+        //
+        assert_eq!(
+            validate_instantiate(
+                &item,
+                &kind,
+                &resolved_names,
+                &resolved_hashes,
+            ).expect("this should work"),
+            expected,
+        );
     }
-    */
 }

@@ -156,7 +156,7 @@ fn parse_value_assignment(input: &str) -> IResult<&str, ValueAssignment, Verbose
 }
 
 // TypeRef (variantName {fieldName: {}, fieldName2: (var2 "stringval")})
-fn parse_value_expression(input: &str) -> IResult<&str, ValueExpr, VerboseError<&str>> {
+pub fn parse_value_expression(input: &str) -> IResult<&str, ValueExpr, VerboseError<&str>> {
     map(tuple((parse_typeref, multispace1, parse_value_item)), 
         |(kind, _, val)| ValueExpr { kind, val })(input)
 }

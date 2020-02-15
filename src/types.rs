@@ -55,7 +55,7 @@ pub struct TypedValue {
     pub value: RADTValue,
 }
 impl TypedValue {
-    fn typing(&self) -> Typing {
+    pub fn typing(&self) -> Typing {
         Typing {
             kind: self.kind.clone(),
             data: self.value.hash(),
@@ -69,7 +69,7 @@ pub struct TypeRef {
     pub item: usize,
 }
 impl TypeRef {
-    fn value(&self, val: RADTValue) -> TypedValue {
+    pub fn value(&self, val: RADTValue) -> TypedValue {
         TypedValue {
             kind: *self,
             value: val,
@@ -484,13 +484,13 @@ impl Decodable for RADTItem {
     }
 }
 impl RADT {
-    fn typing(&self) -> Typing {
+    pub fn typing(&self) -> Typing {
         Typing {
             kind: RADT_TYPE_REF,
             data: self.hash(),
         }
     }
-    fn item_ref(&self, item: usize) -> TypeRef {
+    pub fn item_ref(&self, item: usize) -> TypeRef {
         TypeRef {
             definition: self.typing().hash(),
             item,
