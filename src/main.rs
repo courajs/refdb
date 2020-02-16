@@ -34,16 +34,6 @@ fn run_app() -> Result<(), Error> {
 
     let args: Vec<String> = std::env::args().collect();
 
-    if args.len() <= 1 {
-        bail!("provide a command!")
-    }
-    if args.len() <= 2 {
-        bail!("provide an argument!")
-    }
-    if !(args[1] == "foo" || args[1] == "store_string" || args[1] == "fetch_string" || args[1] == "store" || args[1] == "list_types" || args[1] == "list_of_type") {
-        bail!("commands are \"store\", \"store_string\" and \"fetch_string\"")
-    }
-
     let arc = Manager::singleton()
         .write()
         .unwrap()
@@ -91,6 +81,9 @@ fn run_app() -> Result<(), Error> {
 
     match args[1].deref() {
         "list_of_type" => {
+            if args.len() <= 2 {
+                bail!("list what type?");
+            }
             let env = db.get_default_env()?.unwrap();
             let names = env.name_resolutions();
 
@@ -179,6 +172,9 @@ fn run_app() -> Result<(), Error> {
         },
 
         "store" => {
+            if args.len() <= 2 {
+                bail!("what should I store?");
+            }
             let mut env: Env;
 
             let input = args[2].deref();
@@ -393,7 +389,13 @@ fn run_app() -> Result<(), Error> {
             db.update_default_env(&env)?;
         },
 
+        "list_vars" => {
+        },
+
         "store_string" => {
+            if args.len() <= 2 {
+                bail!("What string should I store?");
+            }
             let (val, deps) = args[2].to_value();
             for i in deps { db.put_item(&i)?; }
             let h = db.put_item(&Item::Value(val))?;
@@ -401,6 +403,9 @@ fn run_app() -> Result<(), Error> {
         },
 
         "fetch_string" => {
+            if args.len() <= 2 {
+                bail!("What string should I fetch?");
+            }
             let bytes = match hex::decode(&args[2]) {
                 Err(e) => {
                     return Err(MonsterError::Todo("bad hex"))?
