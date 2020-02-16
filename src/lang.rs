@@ -87,6 +87,12 @@ pub enum TypeSpec<'a> {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TypeDef<'a>(pub &'a str, pub TypeSpec<'a>);
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct ValueAssignment<'a> {
+    pub ident: &'a str,
+    pub val: ValueExpr<'a>,
+}
+
 #[derive(Debug, PartialEq, Clone)]
 pub struct ValueExpr<'a> {
     pub kind: TypeReference<'a>,
@@ -140,12 +146,6 @@ pub type FieldsDef<'a> = Vec<(ItemSpecifier<'a>, ValueItem<'a>)>;
 #[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     String(String),
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct ValueAssignment<'a> {
-    pub ident: &'a str,
-    pub val: ValueExpr<'a>,
 }
 
 fn parse_value_assignment(input: &str) -> IResult<&str, ValueAssignment, VerboseError<&str>> {

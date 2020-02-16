@@ -235,7 +235,12 @@ fn run_app() -> Result<(), Error> {
             }
 
 
+            // TODO check for duplicate names within assignments,
+            // between assignments and typedefs, and between
+            // assignments/typedefs and environment
 
+            let mut type_name_resolutions: HashMap<&str, TypeRef> = HashMap::new();
+            let mut type_prefix_resolutions: HashMap<Vec<u8>, Hash> = HashMap::new();
             {
                 let mut names: HashSet<&str> = HashSet::new();
                 let mut hashes: HashSet<TypeRef> = HashSet::new();
@@ -254,14 +259,17 @@ fn run_app() -> Result<(), Error> {
                 let name_lookups = env.name_resolutions();
                 for n in names {
                     match name_lookups.get(n) {
-                        Some(TypeRef{definition,..}) => {radts_to_fetch.insert(*definition);},
+                        Some(tr) => {
+                            type_name_resolutions.insert(n, *tr);
+                            radts_to_fetch.insert(tr.definition);
+                        },
                         None => Err(MonsterError::Formatted(format!("Name not found: \"{}\"", n)))?,
                     }
                 }
                 {
                     let reader = db.reader();
-                    for (pre,_) in short_hashes.iter() {
-                        let h = match db.resolve_hash_prefix(&reader, pre) {
+                    for (pre,_) in short_hashes {
+                        let h = match db.resolve_hash_prefix(&reader, &pre) {
                             Ok(h) => h,
                             Err(MonsterError::HashResolutionNotFound) => {
                                 Err(MonsterError::Formatted(format!("No type found for prefix #{}", hex::encode(pre))))?;
@@ -272,6 +280,7 @@ fn run_app() -> Result<(), Error> {
                                 unreachable!();
                             }
                         };
+                        type_prefix_resolutions.insert(pre, h);
                         radts_to_fetch.insert(h);
                     }
                 }
@@ -288,9 +297,81 @@ fn run_app() -> Result<(), Error> {
                         Err(MonsterError::Formatted(format!("{} was not a type: {:?}", h, item)))?;
                     }
                 }
-
-                dbg!(radts);
             }
+
+            let mut value_names: HashSet<&str> = HashSet::new();
+            let mut value_prefixes: HashSet<&[u8]> = HashSet::new();
+
+            fn get_things<'a>(item: &'a ValueItem, names: &mut HashSet<&'a str>, prefixes: &mut HashSet<&'a [u8]>) {
+                match item {
+                    ValueItem::NameRef(n) => {names.insert(*n);},
+                    ValueItem::ShortHashRef(pre) => {prefixes.insert(pre);},
+                    ValueItem::Variant(def) => get_things(def.val.deref(), names, prefixes),
+                    ValueItem::Fields(fields) => for (_,inner) in fields {
+                        get_things(inner, names, prefixes);
+                    }
+                    _ => (),
+                }
+            }
+            for item in assignments.iter() {
+                get_things(&item.val.val, &mut value_names, &mut value_prefixes);
+            }
+
+            // resolve the value's referenced names and prefixes
+            let mut value_name_resolutions = HashMap::new();
+            for name in value_names {
+                if let Some(h) = env.variables.get(name) {
+                    value_name_resolutions.insert(name, *h);
+                } else {
+                    Err(MonsterError::Todo("referenced a thing you don't have"))?;
+                    unreachable!();
+                }
+            }
+
+            let mut value_prefix_resolutions = HashMap::new();
+            {
+                let reader = db.reader();
+                for pre in value_prefixes {
+                    let h = db.resolve_hash_prefix(&reader, pre)?;
+                    value_prefix_resolutions.insert(pre, h);
+                }
+            }
+
+            for assignment in assignments.iter() {
+                let kind = match &assignment.val.kind {
+                    TypeReference::Hash(h, item) => TypeRef { definition: *h, item: *item },
+                    TypeReference::ShortHash(pre, item) => {
+                        // we explicitly fetched all names and prefixes earlier and would have
+                        // already errored if any weren't found
+                        let h = type_prefix_resolutions.get(pre).unwrap();
+                        TypeRef { definition: *h, item: *item }
+                    },
+                    TypeReference::Name(n) => {
+                        *type_name_resolutions.get(n).unwrap()
+                    }
+                };
+                
+                use crate::eval::LabeledRADT;
+                let labeled_type = if let Some(labeling) = env.labelings.get(&kind.definition) {
+                    let radt = radts.get(&kind.definition).unwrap();
+                    LabeledRADT::new(&radt, &labeling)
+                } else {
+                    Err(MonsterError::Todo("only support instantiating labeled types"))?;
+                    unreachable!();
+                };
+                let (val, deps, expectations) = eval::validate_instantiate(
+                    &assignment.val.val,
+                    &labeled_type,
+                    kind.item,
+                    &value_name_resolutions,
+                    &value_prefix_resolutions,
+                )?;
+                dbg!(val, deps, expectations);
+            }
+            
+            // confirm expectations
+            // store val and deps
+            // put new variables in env
 
             
             if let Some((_,rad)) = new_radt {

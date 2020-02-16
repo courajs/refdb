@@ -110,7 +110,7 @@ pub enum LabeledRADTItem {
     CycleRef(usize),
 }
 impl LabeledRADT {
-    fn new(radt: &RADT, labels: &LabelSet) -> LabeledRADT {
+    pub fn new(radt: &RADT, labels: &LabelSet) -> LabeledRADT {
         Self::_new(radt, labels).expect("This label doesn't apply to this RADT")
     }
     fn _new(radt: &RADT, labels: &LabelSet) -> Result<LabeledRADT, ()> {
