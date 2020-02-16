@@ -157,8 +157,7 @@ fn run_app() -> Result<(), Error> {
 
             for t in labeled {
                 if let Ok(Item::TypeDef(r)) = db.get(t) {
-                    let ty = Typing { kind: RADT_TYPE_REF, data: r.hash() };
-                    println!("ref: {}", ty.hash());
+                    println!("ref: {}", r.typing().hash());
                     let l = env.labelings.get(&t).unwrap();
                     let s = labels::print_with_env(&r, &env)?;
                     println!("{}", s);
@@ -390,7 +389,48 @@ fn run_app() -> Result<(), Error> {
         },
 
         "list_vars" => {
+            let env = db.get_default_env()?.unwrap();
+            for (name, _) in env.variables {
+                println!("{}", name);
+            }
         },
+
+        "inspect" => {
+            if args.len() <= 2 {
+                bail!("inspect what?");
+            }
+            let env = db.get_default_env()?.unwrap();
+            if let Some(h) = env.variables.get(&args[2]) {
+                println!("{} ({}):", &args[2], h);
+                let val = db.get(*h)?;
+                match val {
+                    Item::Blob(b) => println!("{:?}", b),
+                    Item::BlobRef(r) => println!("{}", r),
+                    Item::TypeDef(rad) => {
+                        if let Some(l) = env.labelings.get(h) {
+                            println!("{}", labels::print_with_env(&rad, &env)?);
+                        } else {
+                            println!("{}", rad)
+                        }
+                    },
+                    Item::Value(typed_val) => {
+                        if let Some(l) = env.labelings.get(&typed_val.kind.definition) {
+                            let rad = sure!(db.get(typed_val.kind.definition)?, Item::TypeDef(r) => r);
+                            println!("{}", labels::print_val_with_env(
+                                    &typed_val.value,
+                                    &types::TypeSpec {
+                                        definition: &rad,
+                                        item: typed_val.kind.item,
+                                    },
+                                    &env
+                            )?);
+                        } else {
+                            println!("{}", &typed_val.value);
+                        }
+                    },
+                }
+            }
+        }
 
         "store_string" => {
             if args.len() <= 2 {
