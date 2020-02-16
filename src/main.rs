@@ -337,6 +337,9 @@ fn run_app() -> Result<(), Error> {
                 }
             }
 
+            let mut new_values: HashMap<String, Hash> = HashMap::new();
+            let mut all_expectations = Vec::new();
+            let mut all_deps = Vec::new();
             for assignment in assignments.iter() {
                 let kind = match &assignment.val.kind {
                     TypeReference::Hash(h, item) => TypeRef { definition: *h, item: *item },
@@ -366,9 +369,15 @@ fn run_app() -> Result<(), Error> {
                     &value_name_resolutions,
                     &value_prefix_resolutions,
                 )?;
-                dbg!(val, deps, expectations);
+
+                new_values.insert(assignment.ident.to_string(), val.typing().hash());
+                all_deps.push(Item::Value(val));
+                all_deps.extend(deps);
+                all_expectations.extend(expectations);
             }
-            
+
+            db.confirm_typings(&all_expectations)?;
+
             // confirm expectations
             // store val and deps
             // put new variables in env
@@ -377,6 +386,10 @@ fn run_app() -> Result<(), Error> {
             if let Some((_,rad)) = new_radt {
                 db.put_item(&Item::TypeDef(rad))?;
             }
+            for item in all_deps {
+                db.put_item(&item)?;
+            }
+            env.variables.extend(new_values);
             db.update_default_env(&env)?;
         },
 
