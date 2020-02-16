@@ -400,35 +400,56 @@ fn run_app() -> Result<(), Error> {
                 bail!("inspect what?");
             }
             let env = db.get_default_env()?.unwrap();
-            if let Some(h) = env.variables.get(&args[2]) {
-                println!("{} ({}):", &args[2], h);
-                let val = db.get(*h)?;
-                match val {
-                    Item::Blob(b) => println!("{:?}", b),
-                    Item::BlobRef(r) => println!("{}", r),
-                    Item::TypeDef(rad) => {
-                        if let Some(l) = env.labelings.get(h) {
-                            println!("{}", labels::print_with_env(&rad, &env)?);
-                        } else {
-                            println!("{}", rad)
-                        }
-                    },
-                    Item::Value(typed_val) => {
-                        if let Some(l) = env.labelings.get(&typed_val.kind.definition) {
-                            let rad = sure!(db.get(typed_val.kind.definition)?, Item::TypeDef(r) => r);
-                            println!("{}", labels::print_val_with_env(
-                                    &typed_val.value,
-                                    &types::TypeSpec {
-                                        definition: &rad,
-                                        item: typed_val.kind.item,
-                                    },
-                                    &env
-                            )?);
-                        } else {
-                            println!("{}", &typed_val.value);
-                        }
-                    },
+
+            let object_hash = match lang::as_object_ref(&args[2])? {
+                lang::ObjectReference::Hash(h) => h,
+                lang::ObjectReference::ShortHash(prefix) => {
+                    let reader = db.reader();
+                    db.resolve_hash_prefix(&reader, &prefix)?
+                },
+                lang::ObjectReference::Ident(name) => {
+                    env.variables.get(name)
+                        .or_else(|| {
+                            env.labelings.iter().find_map(|(h, LabelSet(labels))| {
+                                if labels.iter().any(|l| l.name == args[2].deref()) {
+                                    Some(h)
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                        .map(|h| *h)
+                        .ok_or(MonsterError::Todo("couldn't resolve identifier"))?
                 }
+            };
+            let val = db.get(object_hash)?;
+            println!("{:?}", object_hash);
+
+            match val {
+                Item::Blob(b) => println!("{:?}", b),
+                Item::BlobRef(r) => println!("{}", r),
+                Item::TypeDef(rad) => {
+                    if let Some(l) = env.labelings.get(&object_hash) {
+                        println!("{}", labels::print_with_env(&rad, &env)?);
+                    } else {
+                        println!("{}", rad)
+                    }
+                },
+                Item::Value(typed_val) => {
+                    if let Some(l) = env.labelings.get(&typed_val.kind.definition) {
+                        let rad = sure!(db.get(typed_val.kind.definition)?, Item::TypeDef(r) => r);
+                        println!("{}", labels::print_val_with_env(
+                                &typed_val.value,
+                                &types::TypeSpec {
+                                    definition: &rad,
+                                    item: typed_val.kind.item,
+                                },
+                                &env
+                        )?);
+                    } else {
+                        println!("{}", &typed_val.value);
+                    }
+                },
             }
         }
 

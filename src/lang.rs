@@ -88,6 +88,28 @@ pub enum TypeSpec<'a> {
 pub struct TypeDef<'a>(pub &'a str, pub TypeSpec<'a>);
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum ObjectReference<'a> {
+    Ident(&'a str),
+    Hash(Hash),
+    ShortHash(Vec<u8>),
+}
+pub fn parse_object_ref(input: &str) -> IResult<&str, ObjectReference, VerboseError<&str>> {
+    alt((
+        map(parse_hash, |hash_ref| match hash_ref {
+            HashRef::Full(h) => ObjectReference::Hash(h),
+            HashRef::Prefix(pre) => ObjectReference::ShortHash(pre),
+        }),
+        map(parse_identifier, ObjectReference::Ident),
+    ))(input)
+}
+pub fn as_object_ref(input: &str) -> Result<ObjectReference, MonsterError> {
+    match all_consuming(parse_object_ref)(input) {
+        Ok((_,val)) => Ok(val),
+        Err(_) => Err(MonsterError::Todo("couldn't parse reference")),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct ValueAssignment<'a> {
     pub ident: &'a str,
     pub val: ValueExpr<'a>,
