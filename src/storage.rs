@@ -443,4 +443,10 @@ impl<'a> Db<'a> {
             _ => Err(MonsterError::HashResolutionConflict(results)),
         }
     }
+
+    pub fn delete(&self, h: Hash) -> Result<(), MonsterError> {
+        let mut writer = self.env.write().unwrap();
+        self.store.delete(&mut writer, h).map_err(MonsterError::RkvError)?;
+        writer.commit().map_err(MonsterError::RkvError)
+    }
 }
