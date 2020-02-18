@@ -197,6 +197,18 @@ pub fn validate_instantiate(
     ) -> Result<RADTValue, MonsterError> {
         use crate::bridge::Bridged;
         use crate::storage::{Item, Storable};
+        let h = match ast_item {
+            ValueItem::HashRef(h) => Some(*h),
+            ValueItem::NameRef(name) => match names.get(name) {
+                Some(h) => Some(*h),
+                None => return Err(MonsterError::Todo("name used isn't in environment")),
+            },
+            ValueItem::ShortHashRef(prefix) => match prefix_resolutions.get(&prefix[..]) {
+                Some(h) => Some(*h),
+                None => return Err(MonsterError::Todo("hash prefix wasn't found in environment")),
+            },
+            _ => None,
+        };
         match (radt_item, ast_item) {
             (LabeledRADTItem::ExternalType(stringref), ValueItem::Literal(Literal::String(s))) => {
                 // make the string, add it to deps, and return a Hash to it
@@ -207,35 +219,14 @@ pub fn validate_instantiate(
                 deps.extend(string_deps);
                 Ok(RADTValue::Hash(h))
             },
-            (LabeledRADTItem::ExternalType(t), ValueItem::HashRef(h)) => {
+            (LabeledRADTItem::ExternalType(t), ValueItem::HashRef(_)) |
+            (LabeledRADTItem::ExternalType(t), ValueItem::NameRef(_)) |
+            (LabeledRADTItem::ExternalType(t), ValueItem::ShortHashRef(_)) => {
                 expects.insert(ExpectedTyping {
-                    reference: *h,
+                    reference: h.unwrap(),
                     kind: *t,
                 });
-                Ok(RADTValue::Hash(*h))
-            },
-            (LabeledRADTItem::ExternalType(t), ValueItem::NameRef(name)) => {
-                // resolve the name, add to expectations, return a Hash to it
-                if let Some(h) = names.get(name) {
-                    expects.insert(ExpectedTyping {
-                        reference: *h,
-                        kind: *t,
-                    });
-                    Ok(RADTValue::Hash(*h))
-                } else {
-                    Err(MonsterError::Todo("name used isn't in environment"))
-                }
-            },
-            (LabeledRADTItem::ExternalType(t), ValueItem::ShortHashRef(prefix)) => {
-                if let Some(h) = prefix_resolutions.get(&prefix[..]) {
-                    expects.insert(ExpectedTyping {
-                        reference: *h,
-                        kind: *t,
-                    });
-                    Ok(RADTValue::Hash(*h))
-                } else {
-                    Err(MonsterError::Todo("hash prefix wasn't found in environment"))
-                }
+                Ok(RADTValue::Hash(h.unwrap()))
             },
             (LabeledRADTItem::Product(fields), ValueItem::Unit) => {
                 // ensure fields is empty, then return an empty product
@@ -294,6 +285,21 @@ pub fn validate_instantiate(
                 }
                 Ok(RADTValue::Product(produced_items))
             },
+            // This is support to allow referencing another value at any cycle ref boundary.
+            // Not supported by the validation/parsing half yet though, so it adds
+            // non-loadable values to the db.
+            // (LabeledRADTItem::CycleRef(idx), ValueItem::HashRef(_)) |
+            // (LabeledRADTItem::CycleRef(idx), ValueItem::NameRef(_)) |
+            // (LabeledRADTItem::CycleRef(idx), ValueItem::ShortHashRef(_)) => {
+            //     expects.insert(ExpectedTyping {
+            //         reference: h.unwrap(),
+            //         kind: TypeRef {
+            //             definition: full_type.radt().typing().hash(),
+            //             item: *idx,
+            //         },
+            //     });
+            //     Ok(RADTValue::Hash(h.unwrap()))
+            // },
             (LabeledRADTItem::CycleRef(idx), _) => {
                 // recurse with the proper referenced radt_item
                 make_item(&full_type.items[*idx].1, ast_item, full_type, names, prefix_resolutions, deps, expects)
