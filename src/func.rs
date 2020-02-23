@@ -16,52 +16,67 @@ struct FullType {
 #[derive(Debug, Clone, PartialEq)]
 enum Value {
     Blob(Blob),
-    // Typing(Typing),
-    // Value(RADTValue),
-    // Function(Function),
+    Typing(Typing),
+    Value(RADTValue),
+    Function(FunctionReference),
 }
 
 #[derive(Debug, Clone, PartialEq)]
 enum Kind {
     Blob,
-    // Typing,
-    // Value(FullType),
-    // Function(FunctionSignature),
+    Typing,
+    Value(FullType),
+    Function(FunctionSignature),
+}
+impl Value {
+    fn conforms(&self, k: &Kind) -> bool {
+        match (k, self) {
+            (Kind::Blob, Value::Blob(_)) => true,
+            (Kind::Typing, Value::Typing(_)) => true,
+            (Kind::Value(typ), Value::Value(val)) => {
+                todo!()
+            },
+            (Kind::Function(sig), Value::Function(reference)) => {
+                todo!()
+            },
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct FunctionSignature {
     inputs: Vec<Kind>,
     out: Box<Kind>,
-    aux_outs: Vec<Kind>,
 }
 
-struct Function {
-    signature: FunctionSignature,
-    implementation: FunctionImplementation,
-}
-
-enum FunctionImplementation {
-    Builtin(Box<dyn Fn(Vec<Value>) -> (Value, Vec<Value>)>),
+enum FunctionValue {
+    Builtin(BuiltinFunction),
     Defined(FunctionDefinition),
 }
 
-impl FunctionImplementation {
-    fn call(&self, v: Vec<Value>) -> (Value, Vec<Value>) {
-        match self {
-            FunctionImplementation::Builtin(f) => {
-                f(v)
-            },
-            FunctionImplementation::Defined(def) => {
-                todo!()
-            }
-        }
+struct BuiltinFunction {
+    signature: FunctionSignature,
+    f: Box<dyn Fn(Vec<Value>) -> (Value, Vec<Value>)>,
+}
+
+impl BuiltinFunction {
+    fn call(&self, args: Vec<Value>) -> (Value, Vec<Value>) {
+        (self.f)(args)
     }
 }
 
+#[derive(Debug, Clone, PartialEq)]
 struct FunctionDefinition {
-    dependencies: HashMap<String, Function>,
+    signature: FunctionSignature,
+    dependencies: HashMap<String, FunctionReference>,
     body: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum FunctionReference {
+    Builtin(usize),
+    Definition(Hash),
 }
 
 #[cfg(test)]
@@ -76,7 +91,14 @@ mod tests {
 
     #[test]
     fn test_raw_call_builtin() {
-        let builtin = FunctionImplementation::Builtin(Box::new(add));
+        let builtin = BuiltinFunction {
+            signature: FunctionSignature {
+                inputs: vec![Kind::Blob, Kind::Blob],
+                out: Box::new(Kind::Blob),
+            },
+            f: Box::new(add),
+        };
+
         let a = Value::Blob(Blob {bytes: vec![2]});
         let b = Value::Blob(Blob {bytes: vec![3]});
 
