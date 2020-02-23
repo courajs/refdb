@@ -18,6 +18,7 @@ pub mod types;
 pub mod lang;
 pub mod eval;
 pub mod bridge;
+pub mod func;
 
 use crate::core::*;
 use crate::labels::*;
@@ -80,6 +81,9 @@ fn run_app() -> Result<(), Error> {
     })?;
 
     match args[1].deref() {
+        "foo" => {
+
+        },
         "list_of_type" => {
             if args.len() <= 2 {
                 bail!("list what type?");
