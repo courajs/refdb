@@ -3,6 +3,7 @@
 // call a function given a dependency map and arguments
 
 use std::collections::HashMap;
+use std::ops::Deref;
 
 use rhai::{Engine, Scope, RegisterFn, Any as AnyClone};
 
@@ -121,6 +122,7 @@ impl FunctionDefinition {
         engine.register_get("len", |b: &mut Blob| b.bytes.len());
         engine.register_fn("get", |b: &mut Blob, idx: i64| b.bytes[idx as usize]);
         engine.register_fn("set", |b: &mut Blob, idx: i64, val: i64| b.bytes[idx as usize] = val as u8);
+        engine.register_fn("push", |b: &mut Blob, val: i64| b.bytes.push(val as u8));
 
         // args.into_iter().map(Value::into_any).enumerate().map(|(i, val)| (format!("arg{}", i), val))
 
@@ -128,8 +130,22 @@ impl FunctionDefinition {
             scope.push((format!("arg{}", i), val.into_any()));
         }
 
-        let blob = engine.eval_with_scope::<Blob>(&mut scope, &self.body).expect("ahhh");
-        (Value::Blob(blob), Vec::new())
+        match self.signature.out.deref() {
+            Kind::Blob => {
+                let blob = engine.eval_with_scope::<Blob>(&mut scope, &self.body).expect("ahhh");
+                (Value::Blob(blob), Vec::new())
+            },
+            Kind::Typing => {
+                let t = engine.eval_with_scope::<Typing>(&mut scope, &self.body).expect("ahhh");
+                (Value::Typing(t), Vec::new())
+            },
+            Kind::Value(typ) => {
+                todo!()
+            },
+            Kind::Function(sig) => {
+                todo!()
+            },
+        }
         // todo!();
     }
 }
@@ -174,14 +190,14 @@ mod tests {
                 out: Box::new(Kind::Blob),
             },
             dependencies: HashMap::new(),
-            body: String::from("arg0.set(0, 19); arg0"),
+            body: String::from("arg0.push(19); arg0"),
         };
 
         let a = Value::Blob(Blob {bytes: vec![5]});
 
         let deps: HashMap<FunctionReference, FunctionValue> = HashMap::new();
 
-        assert_eq!(def.call(vec![a], &deps), (Value::Blob(Blob{bytes:vec![19]}), Vec::new()));
+        assert_eq!(def.call(vec![a], &deps), (Value::Blob(Blob{bytes:vec![5, 19]}), Vec::new()));
     }
 }
 
