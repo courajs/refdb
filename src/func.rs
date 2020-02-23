@@ -3,9 +3,8 @@
 // call a function given a dependency map and arguments
 
 use std::collections::HashMap;
-use std::any::Any;
 
-use rhai::{Engine, Scope, RegisterFn};
+use rhai::{Engine, Scope, RegisterFn, Any as AnyClone};
 
 use crate::core::*;
 use crate::types::*;
@@ -22,6 +21,18 @@ enum Value {
     Typing(Typing),
     Value(RADTValue),
     Function(FunctionReference),
+    // BuiltinFunction(usize),
+    // DefinedFunction(FunctionDefinition),
+}
+impl Value {
+    fn into_any(self) -> Box<dyn AnyClone> {
+        match self {
+            Value::Blob(inner) => Box::new(inner),
+            Value::Typing(inner) => Box::new(inner),
+            Value::Value(inner) => Box::new(inner),
+            Value::Function(inner) => Box::new(inner),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -40,7 +51,13 @@ impl Value {
                 todo!()
             },
             (Kind::Function(sig), Value::Function(reference)) => {
-                todo!()
+                // So, really, we'd want to be comparing the expected signature
+                // to the real signature. But this is only a reference, so we
+                // don't have the acutal signature here.
+                // Instead, maybe we can typecheck this externally?
+                // Or, we can check builtins with a global lookup table, and
+                // require passing the *actual* function for defined funcs.
+                true
             },
             _ => false,
         }
@@ -101,15 +118,18 @@ impl FunctionDefinition {
         let mut engine = Engine::new();
         let mut scope = Scope::new();
 
-        // engine.register_get("len", |b: &mut Blob| b.bytes.len());
-        // engine.register_fn("get", |b: &mut Blob, idx: i64| b.bytes[idx as usize]);
-        // engine.register_fn("set", |b: &mut Blob, idx: i64, val: i64| b.bytes[idx as usize] = val as u8);
+        engine.register_get("len", |b: &mut Blob| b.bytes.len());
+        engine.register_fn("get", |b: &mut Blob, idx: i64| b.bytes[idx as usize]);
+        engine.register_fn("set", |b: &mut Blob, idx: i64, val: i64| b.bytes[idx as usize] = val as u8);
 
-        let b = sure!(&args[0], Value::Blob(Blob{bytes}) => bytes.clone());
-        scope.push((String::from("arg"), Box::new(b)));
+        // args.into_iter().map(Value::into_any).enumerate().map(|(i, val)| (format!("arg{}", i), val))
 
-        let bytes = engine.eval_with_scope::<Vec<u8>>(&mut scope, &self.body).expect("ahhh");
-        (Value::Blob(Blob{bytes}), Vec::new())
+        for (i, val) in args.into_iter().enumerate() {
+            scope.push((format!("arg{}", i), val.into_any()));
+        }
+
+        let blob = engine.eval_with_scope::<Blob>(&mut scope, &self.body).expect("ahhh");
+        (Value::Blob(blob), Vec::new())
         // todo!();
     }
 }
@@ -154,14 +174,14 @@ mod tests {
                 out: Box::new(Kind::Blob),
             },
             dependencies: HashMap::new(),
-            body: String::from("arg"),
+            body: String::from("arg0.set(0, 19); arg0"),
         };
 
-        let a = Value::Blob(Blob {bytes: Vec::new()});
+        let a = Value::Blob(Blob {bytes: vec![5]});
 
         let deps: HashMap<FunctionReference, FunctionValue> = HashMap::new();
 
-        assert_eq!(def.call(vec![a.clone()], &deps), (a, Vec::new()));
+        assert_eq!(def.call(vec![a], &deps), (Value::Blob(Blob{bytes:vec![19]}), Vec::new()));
     }
 }
 
