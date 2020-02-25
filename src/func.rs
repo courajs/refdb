@@ -4,8 +4,18 @@
 
 use std::collections::HashMap;
 use std::ops::Deref;
+use std::sync::Arc;
 
-use rhai::{Engine, Scope, RegisterFn, Any as AnyClone};
+use lazy_static::lazy_static;
+use rhai::{
+    Engine, Scope,
+    RegisterFn,
+    Any as AnyClone
+};
+use rhai::engine::{
+    FnSpec,
+    FnIntExt,
+};
 
 use crate::core::*;
 use crate::types::*;
@@ -104,6 +114,34 @@ struct FunctionDefinition {
     signature: FunctionSignature,
     dependencies: HashMap<String, FunctionReference>,
     body: String,
+}
+
+fn generate_builtin_map() -> Vec<(FnSpec, Arc<FnIntExt>)> {
+        let mut eng = Engine::new();
+
+        let mut idx = -1;
+        let next = || {
+            idx += 1;
+            format!("{}", idx)
+        };
+
+        // Blob length (usually len(b))
+        eng.register_fn(&next(), |b: &mut Blob| b.bytes.len());
+        // Get a single byte from a blob by index
+        eng.register_fn(&next(), |b: &mut Blob, idx: i64| b.bytes[idx as usize]);
+        // Set a single byte in a blob by index
+        eng.register_fn(&next(), |b: &mut Blob, idx: i64, val: i64| b.bytes[idx as usize] = val as u8);
+        // Add a byte to the end of a blob
+        eng.register_fn(&next(), |b: &mut Blob, val: i64| b.bytes.push(val as u8));
+
+        let mut result: Vec<(FnSpec, Arc<FnIntExt>)> = eng.fns.into_iter().collect();
+        result.sort_by_key(|(spec,_)| usize::from_str_radix(&spec.ident, 10));
+
+        result
+}
+
+lazy_static! {
+    pub static ref BUILTINS: Vec<(FnSpec, Arc<FnIntExt>)> = generate_builtin_map();
 }
 
 impl FunctionDefinition {
