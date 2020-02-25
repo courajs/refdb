@@ -1,0 +1,18 @@
+[package]
+name = "rhai"
+version = "0.9.1"
+edition = "2018"
+authors = ["Jonathan Turner", "Lukáš Hozda"]
+description = "Embedded scripting for Rust"
+homepage = "https://github.com/jonathandturner/rhai"
+repository = "https://github.com/jonathandturner/rhai"
+readme = "README.md"
+license = "MIT/Apache-2.0"
+include = [
+    "**/*.rs",
+    "scripts/*.rhai",
+    "Cargo.toml"
+]
+
+[features]
+debug_msgs = []
