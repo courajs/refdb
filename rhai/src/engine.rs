@@ -127,8 +127,8 @@ impl fmt::Display for EvalAltResult {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq, PartialOrd, Ord)]
 pub struct FnSpec {
-    ident: String,
-    args: Option<Vec<TypeId>>,
+    pub ident: String,
+    pub args: Option<Vec<TypeId>>,
 }
 
 type IteratorFn = dyn Fn(&Box<dyn Any>) -> Box<dyn Iterator<Item = Box<dyn Any>>>;

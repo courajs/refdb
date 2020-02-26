@@ -41,7 +41,7 @@ macro_rules! debug_println {
 
 mod any;
 mod call;
-mod engine;
+pub mod engine;
 mod fn_register;
 mod parser;
 

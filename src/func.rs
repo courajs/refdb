@@ -3,6 +3,7 @@
 // call a function given a dependency map and arguments
 
 use std::collections::HashMap;
+use std::iter::FromIterator;
 use std::ops::Deref;
 use std::sync::Arc;
 
@@ -44,16 +45,7 @@ impl Value {
             Value::Function(inner) => Box::new(inner),
         }
     }
-}
 
-#[derive(Debug, Clone, PartialEq)]
-enum Kind {
-    Blob,
-    Typing,
-    Value(FullType),
-    Function(FunctionSignature),
-}
-impl Value {
     fn conforms(&self, k: &Kind) -> bool {
         match (k, self) {
             (Kind::Blob, Value::Blob(_)) => true,
@@ -71,6 +63,25 @@ impl Value {
                 true
             },
             _ => false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum Kind {
+    Blob,
+    Typing,
+    Value(FullType),
+    Function(FunctionSignature),
+}
+use std::any::TypeId;
+impl Kind {
+    fn to_value_type_id(&self) -> TypeId {
+        match self {
+            Kind::Blob => TypeId::of::<Blob>(),
+            Kind::Typing => TypeId::of::<Typing>(),
+            Kind::Value(_) => TypeId::of::<RADTValue>(),
+            Kind::Function(_) => TypeId::of::<FunctionReference>(),
         }
     }
 }
@@ -109,43 +120,50 @@ impl BuiltinFunction {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct FunctionDefinition {
-    signature: FunctionSignature,
-    dependencies: HashMap<String, FunctionReference>,
-    body: String,
-}
-
 fn generate_builtin_map() -> Vec<(FnSpec, Arc<FnIntExt>)> {
+    println!("generate");
         let mut eng = Engine::new();
 
         let mut idx = -1;
-        let next = || {
+        let mut next = || {
             idx += 1;
+            println!("{}", idx);
             format!("{}", idx)
         };
 
-        // Blob length (usually len(b))
-        eng.register_fn(&next(), |b: &mut Blob| b.bytes.len());
-        // Get a single byte from a blob by index
+        // 0: New empty blob
+        eng.register_fn(&next(), || Blob {bytes: Vec::new()});
+        // 1: Blob length (usually len(b))
+        eng.register_fn(&next(), |b: &mut Blob| b.bytes.len() as i64);
+        // 2: Get a single byte from a blob by index
         eng.register_fn(&next(), |b: &mut Blob, idx: i64| b.bytes[idx as usize]);
-        // Set a single byte in a blob by index
+        // 3: Set a single byte in a blob by index
         eng.register_fn(&next(), |b: &mut Blob, idx: i64, val: i64| b.bytes[idx as usize] = val as u8);
-        // Add a byte to the end of a blob
+        // 4: Add a byte to the end of a blob
         eng.register_fn(&next(), |b: &mut Blob, val: i64| b.bytes.push(val as u8));
 
-        let mut result: Vec<(FnSpec, Arc<FnIntExt>)> = eng.fns.into_iter().collect();
-        result.sort_by_key(|(spec,_)| usize::from_str_radix(&spec.ident, 10));
+        let mut result: Vec<(FnSpec, Arc<FnIntExt>)> = eng.fns.into_iter()
+            .filter(|(spec,_)| {
+                usize::from_str_radix(&spec.ident, 10).is_ok()
+            }).collect();
+        result.sort_by_key(|(spec,_)| {
+            usize::from_str_radix(&spec.ident, 10).unwrap()
+        });
 
         result
 }
 
-lazy_static! {
-    pub static ref BUILTINS: Vec<(FnSpec, Arc<FnIntExt>)> = generate_builtin_map();
+trait Callable {
+    fn call(&self, args: Vec<Value>) -> (Value, Vec<Value>);
 }
 
-impl FunctionDefinition {
-    fn call(&self, args: Vec<Value>, deps: &HashMap<FunctionReference, FunctionValue>) -> (Value, Vec<Value>) {
+struct PreparedFunction {
+    signature: FunctionSignature,
+    engine: Engine,
+    body: String,
+}
+impl PreparedFunction {
+    fn call(&mut self, args: Vec<Value>) -> (Value, Vec<Value>) {
         if self.signature.inputs.len() != args.len() {
             panic!("builtin called with wrong number of inputs")
         }
@@ -154,27 +172,18 @@ impl FunctionDefinition {
                 panic!("builtin call parameter mismatch")
             }
         }
-        let mut engine = Engine::new();
         let mut scope = Scope::new();
-
-        engine.register_get("len", |b: &mut Blob| b.bytes.len());
-        engine.register_fn("get", |b: &mut Blob, idx: i64| b.bytes[idx as usize]);
-        engine.register_fn("set", |b: &mut Blob, idx: i64, val: i64| b.bytes[idx as usize] = val as u8);
-        engine.register_fn("push", |b: &mut Blob, val: i64| b.bytes.push(val as u8));
-
-        // args.into_iter().map(Value::into_any).enumerate().map(|(i, val)| (format!("arg{}", i), val))
-
         for (i, val) in args.into_iter().enumerate() {
             scope.push((format!("arg{}", i), val.into_any()));
         }
 
         match self.signature.out.deref() {
             Kind::Blob => {
-                let blob = engine.eval_with_scope::<Blob>(&mut scope, &self.body).expect("ahhh");
+                let blob = self.engine.eval_with_scope::<Blob>(&mut scope, &self.body).expect("ahhh");
                 (Value::Blob(blob), Vec::new())
             },
             Kind::Typing => {
-                let t = engine.eval_with_scope::<Typing>(&mut scope, &self.body).expect("ahhh");
+                let t = self.engine.eval_with_scope::<Typing>(&mut scope, &self.body).expect("ahhh");
                 (Value::Typing(t), Vec::new())
             },
             Kind::Value(typ) => {
@@ -184,7 +193,56 @@ impl FunctionDefinition {
                 todo!()
             },
         }
-        // todo!();
+    }
+    fn register_as(self, ident: String, eng: &mut Engine) {
+        let arg_types = self.signature.inputs.iter().map(Kind::to_value_type_id).collect();
+        let inner = self.engine;
+        eng.register_fn_raw(ident.clone(), Some(arg_types), Box::new(move |args| {
+            inner.call_fn_raw(ident.clone(), args)
+        }));
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct FunctionDefinition {
+    signature: FunctionSignature,
+    dependencies: HashMap<String, FunctionReference>,
+    body: String,
+}
+
+impl FunctionDefinition {
+    fn builtin_deps(&self) -> Vec<usize> {
+        self.dependencies.iter().filter_map(|(_,fref)| match fref {
+            FunctionReference::Builtin(i) => Some(*i),
+            _ => None,
+        }).collect()
+    }
+
+    fn db_deps(&self) -> Vec<Hash> {
+        self.dependencies.iter().filter_map(|(_,fref)| match fref {
+            FunctionReference::Definition(h) => Some(*h),
+            _ => None,
+        }).collect()
+    }
+
+    fn prepare(self, builtins: &[(FnSpec, Arc<FnIntExt>)]) -> PreparedFunction {
+        let mut engine = Engine::new();
+        for (name, fref) in self.dependencies {
+            match fref {
+                FunctionReference::Builtin(i) => {
+                    engine.fns.insert(FnSpec {
+                        ident: name.clone(),
+                        args: builtins[i].0.args.clone(),
+                    }, builtins[i].1.clone());
+                },
+                FunctionReference::Definition(_) => todo!(),
+            }
+        }
+        PreparedFunction {
+            signature: self.signature,
+            engine,
+            body: self.body,
+        }
     }
 }
 
@@ -221,21 +279,23 @@ mod tests {
     }
 
     #[test]
-    fn test_call_basic_def() {
+    fn test_call_def_with_builtin_deps() {
         let def = FunctionDefinition {
             signature: FunctionSignature {
                 inputs: vec![Kind::Blob],
                 out: Box::new(Kind::Blob),
             },
-            dependencies: HashMap::new(),
-            body: String::from("arg0.push(19); arg0"),
+            dependencies: HashMap::from_iter([
+                 (String::from("blob"), FunctionReference::Builtin(0)),
+                 (String::from("len"), FunctionReference::Builtin(1)),
+                 (String::from("push"), FunctionReference::Builtin(4)),
+            ].iter().cloned()),
+            body: String::from("let b = blob(); b.push(arg0.len()); b"),
         };
-
-        let a = Value::Blob(Blob {bytes: vec![5]});
-
-        let deps: HashMap<FunctionReference, FunctionValue> = HashMap::new();
-
-        assert_eq!(def.call(vec![a], &deps), (Value::Blob(Blob{bytes:vec![5, 19]}), Vec::new()));
+        let builtins = generate_builtin_map();
+        let mut prepped = def.prepare(&builtins);
+        let (v,_) = prepped.call(vec![Value::Blob(Blob{bytes: vec![12,12,12]})]);
+        assert_eq!(v, Value::Blob(Blob{bytes:vec![3]}));
     }
 }
 
