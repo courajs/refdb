@@ -3,6 +3,7 @@
 // call a function given a dependency map and arguments
 
 use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::iter::FromIterator;
 use std::ops::Deref;
 use std::sync::Arc;
@@ -21,14 +22,14 @@ use rhai::engine::{
 use crate::core::*;
 use crate::types::*;
 
-#[derive(Debug, Clone, PartialEq)]
-struct FullType {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FullType {
     radt: RADT,
     item: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
-enum Value {
+pub enum Value {
     Blob(Blob),
     Typing(Typing),
     Value(RADTValue),
@@ -75,8 +76,8 @@ impl Value {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-enum Kind {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Kind {
     Blob,
     Typing,
     Value(FullType),
@@ -107,8 +108,8 @@ impl Kind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct FunctionSignature {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionSignature {
     inputs: Vec<Kind>,
     out: Box<Kind>,
 }
@@ -118,12 +119,12 @@ impl FunctionSignature {
     }
 }
 
-enum FunctionValue {
+pub enum FunctionValue {
     Builtin(BuiltinFunction),
     Defined(FunctionDefinition),
 }
 
-struct BuiltinFunction {
+pub struct BuiltinFunction {
     signature: FunctionSignature,
     f: Box<dyn Fn(Vec<Value>) -> Value>,
 }
@@ -178,7 +179,7 @@ fn generate_builtin_map() -> Vec<(FnSpec, Arc<FnIntExt>)> {
         result
 }
 
-struct PreparedFunction {
+pub struct PreparedFunction {
     signature: FunctionSignature,
     engine: Engine,
     body: String,
@@ -227,10 +228,10 @@ impl PreparedFunction {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-struct FunctionDefinition {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionDefinition {
     signature: FunctionSignature,
-    dependencies: HashMap<String, FunctionReference>,
+    dependencies: BTreeMap<String, FunctionReference>,
     body: String,
 }
 
@@ -282,7 +283,7 @@ impl FunctionDefinition {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-enum FunctionReference {
+pub enum FunctionReference {
     Builtin(usize),
     Definition(Hash),
 }
@@ -320,7 +321,7 @@ mod tests {
                 inputs: vec![Kind::Blob],
                 out: Box::new(Kind::Blob),
             },
-            dependencies: HashMap::from_iter([
+            dependencies: BTreeMap::from_iter([
                  (String::from("blob"), FunctionReference::Builtin(0)),
                  (String::from("len"), FunctionReference::Builtin(1)),
                  (String::from("push"), FunctionReference::Builtin(4)),
@@ -340,7 +341,7 @@ mod tests {
                 inputs: vec![Kind::Blob],
                 out: Box::new(Kind::Blob),
             },
-            dependencies: HashMap::from_iter([
+            dependencies: BTreeMap::from_iter([
                  (String::from("blob"), FunctionReference::Builtin(0)),
                  (String::from("len"), FunctionReference::Builtin(1)),
                  (String::from("push"), FunctionReference::Builtin(4)),
@@ -355,7 +356,7 @@ mod tests {
                 inputs: vec![Kind::Blob],
                 out: Box::new(Kind::Blob),
             },
-            dependencies: HashMap::from_iter([
+            dependencies: BTreeMap::from_iter([
                 (String::from("sub"), FunctionReference::Definition(Hash::of(b"owl"))),
             ].iter().cloned()),
             body: String::from("sub(arg0)"),

@@ -1,6 +1,8 @@
 // translations between rust structs and db values
 
 use std::collections::HashMap;
+use std::collections::BTreeMap;
+use std::iter::FromIterator;
 
 use crate::core::*;
 use crate::types::*;
@@ -373,91 +375,7 @@ impl Bridged for usize {
 }
 
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn test_str_roundtrip() {
-        test_roundtrip(String::from("hello"));
-    }
-
-    #[test]
-    fn test_usize() {
-        test_roundtrip(290usize);
-    }
-
-    #[test]
-    fn test_typerefs() {
-        test_roundtrip(TypeRef {
-            definition: Hash::of(b"owl"),
-            item: 290,
-        });
-    }
-
-    #[test]
-    fn test_radt() {
-        test_roundtrip(RADT {
-            uniqueness: b"blob list-------".to_owned(),
-            items: vec![
-                // nil
-                RADTItem::Product(Vec::new()),
-                // cons
-                RADTItem::Product(vec![
-                    RADTItem::ExternalType(BLOB_TYPE_REF),
-                    RADTItem::CycleRef(2),
-                ]),
-                // list
-                RADTItem::Sum(vec![
-                    RADTItem::CycleRef(0),
-                    RADTItem::CycleRef(1),
-                ]),
-            ],
-        });
-    }
-
-    #[test]
-    fn test_label() {
-        test_roundtrip(LabelSet(vec![
-                 Label {
-                    name: "Option".to_owned(),
-                    item: LabeledItem::Sum(vec![
-                        Label { name: "Some".to_owned(), item: LabeledItem::Type },
-                        Label { name: "None".to_owned(), item: LabeledItem::Product(Vec::new()) },
-                    ]),
-                },
-        ]));
-    }
-
-    fn test_roundtrip<T: Bridged + Eq + std::fmt::Debug>(input: T) {
-        let _ = T::radt();
-        let (val, mut deps) = input.to_value();
-        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
-        let result = T::from_value(&val, &env).unwrap();
-        assert_eq!(input, result);
-    }
-
-    #[test]
-    fn test_env() {
-        let mut types = HashMap::<Hash, LabelSet>::new();
-        types.insert(Hash::of(b"quilt"), LabelSet(vec![
-            Label {
-                name: "Value".to_owned(),
-                item: LabeledItem::Type,
-            },
-        ]));
-
-        let mut vars = HashMap::<String, Hash>::new();
-        vars.insert("bookmarks".to_owned(), Hash::of(b"grog"));
-
-        let e = Env {
-            labelings: types,
-            variables: vars,
-        };
-
-        test_roundtrip(e);
-    }
-}
 
 impl Bridged for Env {
     fn radt() -> (RADT, TypeRef) {
@@ -855,7 +773,106 @@ impl Bridged for LabelSet {
     }
 }
 
-// fn translate_vec_to_value_list<T>(items: impl DoubleEndedIterator<Item=T>, mut f: impl FnMut(T) -> RADTValue)
-// -> RADTValue {
-// fn translate_value_list_to_vec<T>(mut v: &RADTValue, mut f: impl FnMut(&RADTValue) -> Result<T, MonsterError>)
-// -> Result<Vec<T>, MonsterError> {
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_str_roundtrip() {
+        test_roundtrip(String::from("hello"));
+    }
+
+    #[test]
+    fn test_usize() {
+        test_roundtrip(290usize);
+    }
+
+    #[test]
+    fn test_typerefs() {
+        test_roundtrip(TypeRef {
+            definition: Hash::of(b"owl"),
+            item: 290,
+        });
+    }
+
+    #[test]
+    fn test_radt() {
+        test_roundtrip(RADT {
+            uniqueness: b"blob list-------".to_owned(),
+            items: vec![
+                // nil
+                RADTItem::Product(Vec::new()),
+                // cons
+                RADTItem::Product(vec![
+                    RADTItem::ExternalType(BLOB_TYPE_REF),
+                    RADTItem::CycleRef(2),
+                ]),
+                // list
+                RADTItem::Sum(vec![
+                    RADTItem::CycleRef(0),
+                    RADTItem::CycleRef(1),
+                ]),
+            ],
+        });
+    }
+
+    #[test]
+    fn test_label() {
+        test_roundtrip(LabelSet(vec![
+                 Label {
+                    name: "Option".to_owned(),
+                    item: LabeledItem::Sum(vec![
+                        Label { name: "Some".to_owned(), item: LabeledItem::Type },
+                        Label { name: "None".to_owned(), item: LabeledItem::Product(Vec::new()) },
+                    ]),
+                },
+        ]));
+    }
+
+    fn test_roundtrip<T: Bridged + Eq + std::fmt::Debug>(input: T) {
+        let _ = T::radt();
+        let (val, mut deps) = input.to_value();
+        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
+        let result = T::from_value(&val, &env).unwrap();
+        assert_eq!(input, result);
+    }
+
+    #[test]
+    fn test_env() {
+        let mut types = HashMap::<Hash, LabelSet>::new();
+        types.insert(Hash::of(b"quilt"), LabelSet(vec![
+            Label {
+                name: "Value".to_owned(),
+                item: LabeledItem::Type,
+            },
+        ]));
+
+        let mut vars = HashMap::<String, Hash>::new();
+        vars.insert("bookmarks".to_owned(), Hash::of(b"grog"));
+
+        let e = Env {
+            labelings: types,
+            variables: vars,
+        };
+
+        test_roundtrip(e);
+    }
+
+    #[test]
+    fn test_function_def() {
+        use crate::func::*;
+        let def = FunctionDefinition {
+            signature: FunctionSignature {
+                inputs: vec![Kind::Blob],
+                out: Box::new(Kind::Blob),
+            },
+            dependencies: BTreeMap::from_iter([
+                 (String::from("blob"), FunctionReference::Builtin(0)),
+                 (String::from("thing"), FunctionReference::Definition(Hash::of(b"owl"))),
+            ].iter().cloned()),
+            body: String::from("let b = blob(); thing(arg0); b"),
+        };
+
+        test_roundtrip(def);
+    }
+}
