@@ -65,6 +65,14 @@ impl Value {
             _ => false,
         }
     }
+    fn from_any(any: &dyn AnyClone) -> Result<Value, &dyn AnyClone> {
+        any.downcast_ref::<Value>().map(Value::clone)
+            .or_else(|| any.downcast_ref::<Blob>().map(|b|Value::Blob(b.clone())))
+            .or_else(|| any.downcast_ref::<Typing>().map(|t|Value::Typing(t.clone())))
+            .or_else(|| any.downcast_ref::<RADTValue>().map(|v|Value::Value(v.clone())))
+            .or_else(|| any.downcast_ref::<FunctionReference>().map(|f|Value::Function(f.clone())))
+            .ok_or(any)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -84,12 +92,30 @@ impl Kind {
             Kind::Function(_) => TypeId::of::<FunctionReference>(),
         }
     }
+
+    fn discriminated_any(&self, v: Value) -> Result<Box<dyn AnyClone>, Value> {
+        if v.conforms(self) {
+            Ok(match v {
+                Value::Blob(inner) => Box::new(inner),
+                Value::Value(inner) => Box::new(inner),
+                Value::Typing(inner) => Box::new(inner),
+                Value::Function(inner) => Box::new(inner),
+            })
+        } else {
+            Err(v)
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
 struct FunctionSignature {
     inputs: Vec<Kind>,
     out: Box<Kind>,
+}
+impl FunctionSignature {
+    fn args_to_type_ids(&self) -> Vec<TypeId> {
+        self.inputs.iter().map(Kind::to_value_type_id).collect()
+    }
 }
 
 enum FunctionValue {
@@ -99,11 +125,11 @@ enum FunctionValue {
 
 struct BuiltinFunction {
     signature: FunctionSignature,
-    f: Box<dyn Fn(Vec<Value>) -> (Value, Vec<Value>)>,
+    f: Box<dyn Fn(Vec<Value>) -> Value>,
 }
 
 impl BuiltinFunction {
-    fn call(&self, args: Vec<Value>) -> (Value, Vec<Value>) {
+    fn call(&self, args: Vec<Value>) -> Value {
         if self.signature.inputs.len() != args.len() {
             panic!("builtin called with wrong number of inputs")
         }
@@ -112,22 +138,20 @@ impl BuiltinFunction {
                 panic!("builtin call parameter mismatch")
             }
         }
-        let (val, aux) = (self.f)(args);
+        let val = (self.f)(args);
         if !val.conforms(&self.signature.out) {
             panic!("unexpected return type from builtin function")
         }
-        (val, aux)
+        val
     }
 }
 
 fn generate_builtin_map() -> Vec<(FnSpec, Arc<FnIntExt>)> {
-    println!("generate");
         let mut eng = Engine::new();
 
         let mut idx = -1;
         let mut next = || {
             idx += 1;
-            println!("{}", idx);
             format!("{}", idx)
         };
 
@@ -143,6 +167,7 @@ fn generate_builtin_map() -> Vec<(FnSpec, Arc<FnIntExt>)> {
         eng.register_fn(&next(), |b: &mut Blob, val: i64| b.bytes.push(val as u8));
 
         let mut result: Vec<(FnSpec, Arc<FnIntExt>)> = eng.fns.into_iter()
+            // Have to ignore builtins like +
             .filter(|(spec,_)| {
                 usize::from_str_radix(&spec.ident, 10).is_ok()
             }).collect();
@@ -153,17 +178,13 @@ fn generate_builtin_map() -> Vec<(FnSpec, Arc<FnIntExt>)> {
         result
 }
 
-trait Callable {
-    fn call(&self, args: Vec<Value>) -> (Value, Vec<Value>);
-}
-
 struct PreparedFunction {
     signature: FunctionSignature,
     engine: Engine,
     body: String,
 }
 impl PreparedFunction {
-    fn call(&mut self, args: Vec<Value>) -> (Value, Vec<Value>) {
+    fn call(&self, args: Vec<Value>) -> Result<Value, rhai::engine::EvalAltResult> {
         if self.signature.inputs.len() != args.len() {
             panic!("builtin called with wrong number of inputs")
         }
@@ -179,12 +200,16 @@ impl PreparedFunction {
 
         match self.signature.out.deref() {
             Kind::Blob => {
-                let blob = self.engine.eval_with_scope::<Blob>(&mut scope, &self.body).expect("ahhh");
-                (Value::Blob(blob), Vec::new())
+                let blob = self.engine.clone().eval_with_scope::<Blob>(&mut scope, &self.body)?;
+                Ok(Value::Blob(blob))
+                // match blob {
+                //     Value::Blob(b) => Ok(Value::Blob(b)),
+                //     _ => panic!("ahh wrong output type"),
+                // }
+                // Ok(Value::Blob(blob))
             },
             Kind::Typing => {
-                let t = self.engine.eval_with_scope::<Typing>(&mut scope, &self.body).expect("ahhh");
-                (Value::Typing(t), Vec::new())
+                todo!()
             },
             Kind::Value(typ) => {
                 todo!()
@@ -195,9 +220,8 @@ impl PreparedFunction {
         }
     }
     fn register_as(self, ident: String, eng: &mut Engine) {
-        let arg_types = self.signature.inputs.iter().map(Kind::to_value_type_id).collect();
         let inner = self.engine;
-        eng.register_fn_raw(ident.clone(), Some(arg_types), Box::new(move |args| {
+        eng.register_fn_raw(ident.clone(), Some(self.signature.args_to_type_ids()), Box::new(move |args| {
             inner.call_fn_raw(ident.clone(), args)
         }));
     }
@@ -225,7 +249,7 @@ impl FunctionDefinition {
         }).collect()
     }
 
-    fn prepare(self, builtins: &[(FnSpec, Arc<FnIntExt>)]) -> PreparedFunction {
+    fn prepare(self, mut db_deps: HashMap<Hash, PreparedFunction>, builtins: &[(FnSpec, Arc<FnIntExt>)]) -> PreparedFunction {
         let mut engine = Engine::new();
         for (name, fref) in self.dependencies {
             match fref {
@@ -235,7 +259,18 @@ impl FunctionDefinition {
                         args: builtins[i].0.args.clone(),
                     }, builtins[i].1.clone());
                 },
-                FunctionReference::Definition(_) => todo!(),
+                FunctionReference::Definition(h) => {
+                    let mut f = db_deps.remove(&h).expect("should pass all dependencies!");
+                    let sig = self.signature.clone();
+                    engine.register_fn_raw(name, Some(self.signature.args_to_type_ids()), Box::new(move |args| {
+                        f.call(args.into_iter().map(|a|Value::from_any(a).expect("ahh non-value argument")).collect())
+                            .map(|result|-> Box<dyn AnyClone> {
+                                sig.out.discriminated_any(result).expect("ahh wrong return type")
+                            })
+                    }));
+                    // todo!();
+                    // let f = db_deps.remove(&h)
+                }
             }
         }
         PreparedFunction {
@@ -256,10 +291,10 @@ enum FunctionReference {
 mod tests {
     use super::*;
 
-    fn add(v: Vec<Value>) -> (Value, Vec<Value>) {
+    fn add(v: Vec<Value>) -> Value {
         let a = sure!(&v[0], Value::Blob(Blob { bytes }) => bytes[0]);
         let b = sure!(&v[1], Value::Blob(Blob { bytes }) => bytes[0]);
-        (Value::Blob(Blob { bytes: vec![a+b] }), Vec::new())
+        Value::Blob(Blob { bytes: vec![a+b] })
     }
 
     #[test]
@@ -275,7 +310,7 @@ mod tests {
         let a = Value::Blob(Blob {bytes: vec![2]});
         let b = Value::Blob(Blob {bytes: vec![3]});
 
-        assert_eq!(builtin.call(vec![a, b]), (Value::Blob(Blob{bytes:vec![5]}), Vec::new()));
+        assert_eq!(builtin.call(vec![a, b]), Value::Blob(Blob{bytes:vec![5]}));
     }
 
     #[test]
@@ -293,10 +328,42 @@ mod tests {
             body: String::from("let b = blob(); b.push(arg0.len()); b"),
         };
         let builtins = generate_builtin_map();
-        let mut prepped = def.prepare(&builtins);
-        let (v,_) = prepped.call(vec![Value::Blob(Blob{bytes: vec![12,12,12]})]);
+        let mut prepped = def.prepare(HashMap::new(), &builtins);
+        let v = prepped.call(vec![Value::Blob(Blob{bytes: vec![12,12,12]})]).expect("ahh");
+        assert_eq!(v, Value::Blob(Blob{bytes:vec![3]}));
+    }
+
+    #[test]
+    fn fn_def_with_def_deps() {
+        let sub_def = FunctionDefinition {
+            signature: FunctionSignature {
+                inputs: vec![Kind::Blob],
+                out: Box::new(Kind::Blob),
+            },
+            dependencies: HashMap::from_iter([
+                 (String::from("blob"), FunctionReference::Builtin(0)),
+                 (String::from("len"), FunctionReference::Builtin(1)),
+                 (String::from("push"), FunctionReference::Builtin(4)),
+            ].iter().cloned()),
+            body: String::from("let b = blob(); b.push(arg0.len()); b"),
+        };
+        let builtins = generate_builtin_map();
+        let mut sub_prepped = sub_def.prepare(HashMap::new(), &builtins);
+
+        let main_def = FunctionDefinition {
+            signature: FunctionSignature {
+                inputs: vec![Kind::Blob],
+                out: Box::new(Kind::Blob),
+            },
+            dependencies: HashMap::from_iter([
+                (String::from("sub"), FunctionReference::Definition(Hash::of(b"owl"))),
+            ].iter().cloned()),
+            body: String::from("sub(arg0)"),
+        };
+        let mut deps = HashMap::new();
+        deps.insert(Hash::of(b"owl"), sub_prepped);
+        let mut main_prepped = main_def.prepare(deps, &builtins);
+        let v = main_prepped.call(vec![Value::Blob(Blob{bytes: vec![12,12,12]})]).expect("ahh");
         assert_eq!(v, Value::Blob(Blob{bytes:vec![3]}));
     }
 }
-
-

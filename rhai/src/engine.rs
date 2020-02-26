@@ -806,7 +806,11 @@ impl Engine {
 
         match x.downcast::<T>() {
             Ok(out) => Ok(*out),
-            Err(a) => Err(EvalAltResult::ErrorMismatchOutputType((*a).type_name())),
+            Err(a) => {
+                // println!("ahh thing \"{}\"", std::any::type_name_of_val(&x)
+                println!("wanted \"{}\"", std::any::type_name::<T>());
+                Err(EvalAltResult::ErrorMismatchOutputType((*a).type_name()))
+            },
         }
     }
 
