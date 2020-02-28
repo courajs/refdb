@@ -24,8 +24,8 @@ use crate::types::*;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FullType {
-    radt: RADT,
-    item: usize,
+    pub radt: RADT,
+    pub item: usize,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -110,8 +110,8 @@ impl Kind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionSignature {
-    inputs: Vec<Kind>,
-    out: Box<Kind>,
+    pub inputs: Vec<Kind>,
+    pub out: Box<Kind>,
 }
 impl FunctionSignature {
     fn args_to_type_ids(&self) -> Vec<TypeId> {
@@ -230,9 +230,9 @@ impl PreparedFunction {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionDefinition {
-    signature: FunctionSignature,
-    dependencies: BTreeMap<String, FunctionReference>,
-    body: String,
+    pub signature: FunctionSignature,
+    pub dependencies: BTreeMap<String, FunctionReference>,
+    pub body: String,
 }
 
 impl FunctionDefinition {

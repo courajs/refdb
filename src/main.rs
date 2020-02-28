@@ -138,9 +138,10 @@ fn run_app() -> Result<(), Error> {
                 if t.kind == kind {
                     let val = db.get(t.hash())?;
                     let typed_val = sure!(val, Item::Value(tv) => tv);
+                    let h = t.hash();
                     let value = typed_val.value;
 
-                    println!("{}", labels::print_val_with_env(&value, &spec, &env)?);
+                    println!("{}: {}", h, labels::print_val_with_env(&value, &spec, &env)?);
                 }
             }
         },
