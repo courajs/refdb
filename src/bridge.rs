@@ -858,6 +858,7 @@ mod tests {
         test_roundtrip(e);
     }
 
+    #[ignore]
     #[test]
     fn test_function_def() {
         use crate::func::*;

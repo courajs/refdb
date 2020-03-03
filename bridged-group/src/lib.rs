@@ -8,14 +8,16 @@ use syn::visit::*;
 
 #[proc_macro]
 pub fn bridged_group(ts: TokenStream) -> TokenStream {
-    let t: File = parse(ts).unwrap();
+    let t: File = parse(ts).expect("b");
+    bridged_group_impl(t).into_token_stream().into()
+}
 
+fn bridged_group_impl(t: File) -> impl ToTokens {
     let mut v = InGroupCollector(Vec::new());
     v.visit_file(&t);
-    // println!("hey {:?}", v.0);
-    let kinds: Vec<Ident> = v.0.into_iter().cloned().collect();
+
+    let kinds = v.0;
     let names: Vec<String> = kinds.iter().map(|i|i.to_string()).collect();
-    let n = names[0].clone();
 
     let impls = kinds.iter().map(|i| {
         let s = i.to_string();
@@ -28,11 +30,10 @@ pub fn bridged_group(ts: TokenStream) -> TokenStream {
         }
     });
 
-    TokenStream::from(quote! {
+    quote! {
         #t
         #(#impls)*
-    })
-    // t.into_token_stream().into()
+    }
 }
 
 struct InGroupCollector<'a>(Vec<&'a Ident>);
@@ -45,10 +46,11 @@ impl<'ast> Visit<'ast> for InGroupCollector<'ast> {
     }
 }
 
-/*
 enum Kind {
+    // Box(Box<Kind>),
     Vector(Box<Kind>),
-    Tuple(Vec<Kind>),
+    // Tuple(Vec<Kind>),
+    Ingroup(Ident),
     Other(Type),
 }
 
@@ -60,11 +62,10 @@ impl FieldCollector {
 }
 impl<'ast> Visit<'ast> for FieldCollector {
     fn visit_field(&mut self, f: &'ast Field) {
-        self.0.push(f.ident.clone().unwrap());
+        self.0.push(f.ident.clone().expect("a"));
         visit_field(self, f);
     }
 }
-*/
 
 /*
 impl VisitMut for Visitor {
@@ -76,3 +77,21 @@ impl VisitMut for Visitor {
     }
 }
 */
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn thing() {
+        let input = quote! {
+            struct Hey {
+                x: u8,
+            }
+        };
+        let val = bridged_group_impl(parse2(input).unwrap());
+        dbg!(val.into_token_stream().to_string());
+        panic!();
+    }
+}
