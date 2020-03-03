@@ -1,12 +1,22 @@
-// extern crate bridged_group;
+use rf0::types::*;
+use rf0::core::*;
+use rf0::storage::Storable;
+use rf0::bridge::*;
 use bridged_group::*;
-// use bridged_group::bridged_group;
+
 bridged_group! {
+    #![bridged(uniq = *b"1234567812345678")]
+    struct Thing;
 }
 
 #[test]
-fn thing() {
-    let h = rf0::core::Hash::of(b"owl");
-    dbg!(h);
-    panic!();
+fn hello_bridged() {
+    let r = RADT {
+        uniqueness: *b"1234567812345678",
+        items: vec![
+            RADTItem::Product(Vec::new()),
+        ],
+    };
+    let t = r.typing().hash();
+    assert_eq!(Thing::radt(), (r, t));
 }
