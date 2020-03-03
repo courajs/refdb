@@ -9,31 +9,29 @@ use failure::bail;
 use hex_literal::hex;
 use rkv::{Manager, Rkv, SingleStore, StoreOptions};
 
-#[macro_use]
-pub mod core;
-pub mod error;
-pub mod labels;
-pub mod storage;
-pub mod types;
-pub mod lang;
-pub mod eval;
-pub mod bridge;
-pub mod func;
+use rf0::sure;
 
-use crate::core::*;
-use crate::labels::*;
-use crate::storage::*;
-use crate::types::*;
-use crate::bridge::*;
-use crate::error::MonsterError;
-use crate::eval::Env;
-use crate::lang::*;
+use rf0::lang;
+use rf0::types;
+use rf0::labels;
+use rf0::eval;
+use rf0::core::*;
+use rf0::labels::*;
+use rf0::storage::*;
+use rf0::types::*;
+use rf0::bridge::*;
+use rf0::error::MonsterError;
+use rf0::eval::Env;
+use rf0::lang::*;
 
 use std::ops::Deref;
 
 fn run_app() -> Result<(), Error> {
 
     let args: Vec<String> = std::env::args().collect();
+    if args.len() <= 1 {
+        bail!("pass a command!");
+    }
 
     let arc = Manager::singleton()
         .write()
@@ -354,7 +352,7 @@ fn run_app() -> Result<(), Error> {
                     }
                 };
                 
-                use crate::eval::LabeledRADT;
+                use rf0::eval::LabeledRADT;
                 let labeled_type = if let Some(labeling) = env.labelings.get(&kind.definition) {
                     let radt = radts.get(&kind.definition).unwrap();
                     LabeledRADT::new(&radt, &labeling)

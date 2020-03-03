@@ -109,6 +109,7 @@ impl Decodable for Blob {
     }
 }
 
+#[macro_export]
 macro_rules! sure {
     // sure!(val, Enum::Variant{field, name: Enum::Variant2(num)} => (field, num))
     ($target:expr, $p:pat => $res:expr; $else:expr) => {
