@@ -1,4 +1,4 @@
-#[allow(unused_imports, dead_code)]
+#![allow(unused_mut, dead_code, unused_variables, unused_imports)]
 
 use rf0::types::*;
 use rf0::core::*;
@@ -74,5 +74,34 @@ mod t3 {
             ],
         };
         assert_eq!(<Thing as Bridged>::radt(), (r.clone(), r.item_ref(0)));
+    }
+}
+
+#[cfg(test)]
+mod t4 {
+    use super::*;
+
+    bridged_group! {
+        #![uniq(*b"1234567812345678")]
+        struct Thing {
+            x: Other,
+        }
+        struct Other;
+    }
+
+    #[test]
+    fn cycle_ref() {
+        let (_,t_usize) = usize::radt();
+        let r = RADT {
+            uniqueness: *b"1234567812345678",
+            items: vec![
+                RADTItem::Product(vec![
+                    RADTItem::CycleRef(1),
+                ]),
+                RADTItem::Product(Vec::new()),
+            ],
+        };
+        assert_eq!(<Thing as Bridged>::radt(), (r.clone(), r.item_ref(0)));
+        assert_eq!(<Other as Bridged>::radt(), (r.clone(), r.item_ref(1)));
     }
 }
