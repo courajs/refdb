@@ -5,7 +5,7 @@ use rf0::bridge::*;
 use bridged_group::*;
 
 bridged_group! {
-    #![bridged(uniq = *b"1234567812345678")]
+    #![uniq(*b"1234567812345678")]
     struct Thing;
 }
 
@@ -17,6 +17,6 @@ fn hello_bridged() {
             RADTItem::Product(Vec::new()),
         ],
     };
-    let t = r.typing().hash();
-    assert_eq!(Thing::radt(), (r, t));
+    let t = r.item_ref(0);
+    assert_eq!(<Thing as Bridged>::radt(), (r, t));
 }

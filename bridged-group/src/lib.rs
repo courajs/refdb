@@ -14,7 +14,9 @@ pub fn bridged_group(ts: TokenStream) -> TokenStream {
     bridged_group_impl(t).into_token_stream().into()
 }
 
-fn bridged_group_impl(t: File) -> impl ToTokens {
+fn bridged_group_impl(mut t: File) -> impl ToTokens {
+    let uniq = pop_uniqueness(&mut t.attrs).expect("should provide uniqueness");
+
     let mut v = InGroupCollector(Vec::new());
     v.visit_file(&t);
 
@@ -24,9 +26,15 @@ fn bridged_group_impl(t: File) -> impl ToTokens {
     let impls = kinds.iter().map(|i| {
         let s = i.to_string();
         quote! {
-            impl #i {
-                fn all() -> Vec<String> {
-                    vec![#(String::from(#names)),*]
+            impl rf0::bridge::Bridged for #i {
+                fn radt() -> (rf0::types::RADT, rf0::types::TypeRef) {
+                    todo!()
+                }
+                fn to_value(&self) -> (rf0::types::TypedValue, Vec<rf0::storage::Item>) {
+                    todo!()
+                }
+                fn from_value(v: &rf0::types::TypedValue, deps: &std::collections::HashMap<rf0::core::Hash, rf0::storage::Item>) -> Result<Self, rf0::error::MonsterError> {
+                    todo!()
                 }
             }
         }
@@ -36,6 +44,16 @@ fn bridged_group_impl(t: File) -> impl ToTokens {
         #t
         #(#impls)*
     }
+}
+
+fn pop_uniqueness(attrs: &mut Vec<Attribute>) -> Option<Expr> {
+    for i in 0..attrs.len() {
+        if attrs[i].path.is_ident("uniq") {
+            let a = attrs.remove(i);
+            return Some(a.parse_args::<Expr>().unwrap());
+        }
+    }
+    None
 }
 
 struct InGroupCollector<'a>(Vec<&'a Ident>);
@@ -86,14 +104,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn thing() {
-        let input = quote! {
-            struct Hey {
-                x: u8,
-            }
-        };
-        let val = bridged_group_impl(parse2(input).unwrap());
-        dbg!(val.into_token_stream().to_string());
-        panic!();
+    fn uniqueness_from_attribute() {
+        // https://docs.rs/syn/1.0.16/syn/struct.Attribute.html#parsing-from-tokens-to-attribute
+        let input = quote! { #![uniq(*b"1234")] };
+        let attr = parse2::<File>(input).unwrap().attrs[0].clone();
+
+        dbg!(attr.parse_args::<Expr>());
+
+        // panic!();
     }
+
+
 }
