@@ -17,18 +17,39 @@ pub fn bridged_group(ts: TokenStream) -> TokenStream {
 fn bridged_group_impl(mut t: File) -> impl ToTokens {
     let uniq = pop_uniqueness(&mut t.attrs).expect("should provide uniqueness");
 
-    let mut v = InGroupCollector(Vec::new());
-    v.visit_file(&t);
+    let mut name_finder = ItemNamesCollector::new();
+    name_finder.visit_file(&t);
 
-    let kinds = v.0;
-    let names: Vec<String> = kinds.iter().map(|i|i.to_string()).collect();
+    let mut field_finder = AllFieldsCollector::new();
+    field_finder.visit_file(&t);
 
-    let impls = kinds.iter().map(|i| {
-        let s = i.to_string();
+    let items: Vec<_> = field_finder.structs.iter().map(|(ident, fields)| {
         quote! {
-            impl rf0::bridge::Bridged for #i {
+            rf0::types::RADTItem::Product(vec![
+                #(
+                    {
+                        let (_,typeref) = <#fields as rf0::bridge::Bridged>::radt();
+                        rf0::types::RADTItem::ExternalType(typeref)
+                    }
+                ),*
+            ])
+        }
+    }).collect();
+
+    let impls = name_finder.names.into_iter().enumerate().map(|(index, ident)| {
+        let uniq = uniq.clone();
+        let items = items.clone();
+        quote! {
+            impl rf0::bridge::Bridged for #ident {
                 fn radt() -> (rf0::types::RADT, rf0::types::TypeRef) {
-                    todo!()
+                    let r = rf0::types::RADT {
+                        uniqueness: #uniq,
+                        items: vec![
+                            #(#items),*
+                        ]
+                    };
+                    let t = r.item_ref(#index);
+                    (r, t)
                 }
                 fn to_value(&self) -> (rf0::types::TypedValue, Vec<rf0::storage::Item>) {
                     todo!()
@@ -56,34 +77,59 @@ fn pop_uniqueness(attrs: &mut Vec<Attribute>) -> Option<Expr> {
     None
 }
 
-struct InGroupCollector<'a>(Vec<&'a Ident>);
-impl<'ast> Visit<'ast> for InGroupCollector<'ast> {
+struct ItemNamesCollector<'a>{
+    pub names: Vec<&'a Ident>,
+}
+impl<'a> ItemNamesCollector<'a> {
+    fn new() -> Self {
+        Self { names: Vec::new() }
+    }
+}
+impl<'ast> Visit<'ast> for ItemNamesCollector<'ast> {
     fn visit_item_struct(&mut self, f: &'ast ItemStruct) {
-        self.0.push(&f.ident)
+        self.names.push(&f.ident)
     }
     fn visit_item_enum(&mut self, e: &'ast ItemEnum) {
-        self.0.push(&e.ident)
+        self.names.push(&e.ident)
     }
 }
 
 enum Kind {
     // Box(Box<Kind>),
-    Vector(Box<Kind>),
+    // Vector(Box<Kind>),
     // Tuple(Vec<Kind>),
-    Ingroup(Ident),
+    // Ingroup(Ident),
     Other(Type),
 }
 
-struct FieldCollector(Vec<Ident>);
+struct AllFieldsCollector {
+    structs: Vec<(Ident, Vec<Type>)>,
+}
+impl AllFieldsCollector {
+    fn new() -> Self {
+        Self { structs: Vec::new() }
+    }
+}
+impl<'ast> Visit<'ast> for AllFieldsCollector {
+    fn visit_item_struct(&mut self, s: &'ast ItemStruct) {
+        let mut v = FieldCollector::new();
+        v.visit_item_struct(s);
+        self.structs.push((s.ident.clone(), v.types));
+    }
+}
+
+struct FieldCollector {
+    types: Vec<Type>,
+}
 impl FieldCollector {
     fn new() -> FieldCollector {
-        FieldCollector(Vec::new())
+        FieldCollector{ types: Vec::new()}
     }
 }
 impl<'ast> Visit<'ast> for FieldCollector {
     fn visit_field(&mut self, f: &'ast Field) {
-        self.0.push(f.ident.clone().expect("a"));
-        visit_field(self, f);
+        self.types.push(f.ty.clone());
+        // visit_field(self, f);
     }
 }
 
