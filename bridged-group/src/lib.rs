@@ -2,6 +2,8 @@
 
 extern crate proc_macro;
 
+use std::collections::HashMap;
+
 use proc_macro::TokenStream;
 use quote::*;
 use syn::*;
@@ -14,24 +16,78 @@ pub fn bridged_group(ts: TokenStream) -> TokenStream {
     bridged_group_impl(t).into_token_stream().into()
 }
 
-fn bridged_group_impl(mut t: File) -> impl ToTokens {
-    let uniq = pop_uniqueness(&mut t.attrs).expect("should provide uniqueness");
+fn ty_to_tokens(ty: &Ty, locals: &HashMap<&Ident, usize>) -> impl ToTokens {
+    match ty {
+        Ty::Ingroup(ident) => {
+            let p = locals.get(ident).unwrap();
+            quote! { rf0::types::RADTItem::CycleRef(#p) }
+        },
+        Ty::Other(ast_ty) => {
+            quote! {
+                {
+                    let (_,typeref) = <#ast_ty as rf0::bridge::Bridged>::radt();
+                    rf0::types::RADTItem::ExternalType(typeref)
+                }
+            }
+        },
+    }
+}
+
+fn bridged_group_impl(mut file: File) -> impl ToTokens {
+    let uniq = pop_uniqueness(&mut file.attrs).expect("should provide uniqueness");
 
     let mut name_finder = ItemNamesCollector::new();
-    name_finder.visit_file(&t);
+    name_finder.visit_file(&file);
     let names = name_finder.names;
 
-    let mut field_finder = AllFieldsCollector::new(names.clone());
-    field_finder.visit_file(&t);
+    let mut name_to_cycle_refs = HashMap::new();
+    for (i, name) in names.iter().enumerate() {
+        name_to_cycle_refs.insert(name, i);
+    }
 
-    let items: Vec<_> = field_finder.structs.iter().map(|(kind, fields)| {
-        let f = fields.into_iter().map(|kind| {
-            match kind {
-                Kind::Ingroup(ident) => {
+    let mut defs_finder = DefinitionsCollector::new(names.clone());
+    defs_finder.visit_file(&file);
+    // dbg!(defs_finder.defs);
+
+    let radt_items: Vec<_> = defs_finder.defs.iter().map(|def| {
+        match def {
+            Def::Struct(StructDef{fields, ..}) => {
+                match fields {
+                    ItemFields::Unit => quote! { rf0::types::RADTItem::Product(Vec::new()) },
+                    ItemFields::TupleLike(types) => {
+                        let fields = types.iter().map(|ty| ty_to_tokens(ty, &name_to_cycle_refs));
+                        quote! {
+                            rf0::types::RADTItem::Product(vec![
+                                #(
+                                    #fields),*
+                            ])
+                        }
+                    },
+                    ItemFields::StructLike(named_fields) => {
+                        let fields = named_fields.iter().map(|(_,ty)| ty_to_tokens(ty, &name_to_cycle_refs));
+                        quote! {
+                            rf0::types::RADTItem::Product(vec![
+                                #(
+                                    #fields
+                                ),*
+                            ])
+                        }
+                    },
+                }
+            },
+            _ => todo!(),
+        }
+    }).collect();
+
+    /*
+    let items: Vec<_> = field_finder.structs.iter().map(|(ty, fields)| {
+        let f = fields.into_iter().map(|ty| {
+            match ty {
+                Ty::Ingroup(ident) => {
                     let p = names.iter().position(|n| n == ident).unwrap();
                     quote! { rf0::types::RADTItem::CycleRef(#p) }
                 },
-                Kind::Other(ty) => {
+                Ty::Other(ty) => {
                     quote! {
                         {
                             let (_,typeref) = <#ty as rf0::bridge::Bridged>::radt();
@@ -49,10 +105,11 @@ fn bridged_group_impl(mut t: File) -> impl ToTokens {
             ])
         }
     }).collect();
+    */
 
     let impls = names.into_iter().enumerate().map(|(index, ident)| {
         let uniq = uniq.clone();
-        let items = items.clone();
+        let items = radt_items.clone();
         quote! {
             impl rf0::bridge::Bridged for #ident {
                 fn radt() -> (rf0::types::RADT, rf0::types::TypeRef) {
@@ -76,7 +133,7 @@ fn bridged_group_impl(mut t: File) -> impl ToTokens {
     });
 
     let t = quote! {
-        #t
+        #file
         #(#impls)*
     };
 
@@ -117,64 +174,75 @@ impl<'ast> Visit<'ast> for ItemNamesCollector {
     }
 }
 
-enum Kind {
-    // Box(Box<Kind>),
-    // Vector(Box<Kind>),
-    // Tuple(Vec<Kind>),
+#[derive(Debug, Clone, PartialEq)]
+enum Def {
+    Struct(StructDef),
+    Enum(EnumDef),
+}
+#[derive(Debug, Clone, PartialEq)]
+struct StructDef {
+    name: Ident,
+    fields: ItemFields,
+}
+#[derive(Debug, Clone, PartialEq)]
+struct EnumDef {
+    name: Ident,
+    variants: Vec<(Ident, ItemFields)>,
+}
+#[derive(Debug, Clone, PartialEq)]
+enum ItemFields {
+    Unit,
+    TupleLike(Vec<Ty>),
+    StructLike(Vec<(Ident, Ty)>)
+}
+#[derive(Debug, Clone, PartialEq)]
+enum Ty {
+    // Box(Box<Ty>),
+    // Vector(Box<Ty>),
+    // Tuple(Vec<Ty>),
     Ingroup(Ident),
     Other(Type),
 }
 
-struct AllFieldsCollector {
+
+
+struct DefinitionsCollector {
     in_names: Vec<Ident>,
-    structs: Vec<(Ident, Vec<Kind>)>,
+    defs: Vec<Def>,
 }
-impl AllFieldsCollector {
+impl DefinitionsCollector {
     fn new(names: Vec<Ident>) -> Self {
-        Self { in_names: names, structs: Vec::new() }
+        Self { in_names: names, defs: Vec::new() }
     }
 }
-impl<'ast> Visit<'ast> for AllFieldsCollector {
+impl<'ast> Visit<'ast> for DefinitionsCollector {
     fn visit_item_struct(&mut self, s: &'ast ItemStruct) {
-        let mut v = FieldCollector::new();
-        v.visit_item_struct(s);
-        let kinds = v.types.into_iter().map(|ty| {
-            if let Type::Path(TypePath { path, ..}) = &ty {
-                if let Some(n) = self.in_names.iter().find(|n| path.is_ident(*n)) {
-                    return Kind::Ingroup(n.clone());
-                }
-            }
-            return Kind::Other(ty);
-        }).collect();
-        self.structs.push((s.ident.clone(), kinds));
+        self.defs.push(Def::Struct(StructDef {
+            name: s.ident.clone(),
+            fields: gather_fields(&s.fields, &self.in_names),
+        }));
     }
 }
 
-struct FieldCollector {
-    types: Vec<Type>,
-}
-impl FieldCollector {
-    fn new() -> FieldCollector {
-        FieldCollector{ types: Vec::new()}
+fn gather_fields(f: &Fields, in_group: &[Ident]) -> ItemFields {
+    match f {
+        Fields::Unit => ItemFields::Unit,
+        Fields::Unnamed(ufs) => {
+            ItemFields::TupleLike(ufs.unnamed.iter().map(|f| interpret_type(&f.ty, in_group)).collect())
+        },
+        Fields::Named(nfs) => {
+            ItemFields::StructLike(nfs.named.iter().map(|f| (f.ident.clone().unwrap(), interpret_type(&f.ty, in_group))).collect())
+        },
     }
 }
-impl<'ast> Visit<'ast> for FieldCollector {
-    fn visit_field(&mut self, f: &'ast Field) {
-        self.types.push(f.ty.clone());
-        // visit_field(self, f);
+fn interpret_type(ty: &Type, in_group: &[Ident]) -> Ty {
+    if let Type::Path(TypePath {path, ..}) = ty {
+        if let Some(n) = in_group.iter().find(|n| path.is_ident(*n)) {
+            return Ty::Ingroup(n.clone());
+        }
     }
+    return Ty::Other(ty.clone());
 }
-
-/*
-impl VisitMut for Visitor {
-    fn visit_field_mut(&mut self, i: &mut Field) {
-        i.attrs.retain(|attr| {
-            println!("{:?}", attr);
-            !attr.path.is_ident("thing")
-        });
-    }
-}
-*/
 
 
 #[cfg(test)]

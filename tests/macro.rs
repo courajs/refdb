@@ -6,7 +6,6 @@ use rf0::storage::Storable;
 use rf0::bridge::*;
 use bridged_group::*;
 
-#[cfg(test)]
 mod t1 {
     use super::*;
 
@@ -51,7 +50,6 @@ mod t2 {
     }
 }
 
-#[cfg(test)]
 mod t3 {
     use super::*;
 
@@ -77,7 +75,6 @@ mod t3 {
     }
 }
 
-#[cfg(test)]
 mod t4 {
     use super::*;
 
@@ -103,5 +100,28 @@ mod t4 {
         };
         assert_eq!(<Thing as Bridged>::radt(), (r.clone(), r.item_ref(0)));
         assert_eq!(<Other as Bridged>::radt(), (r.clone(), r.item_ref(1)));
+    }
+}
+
+mod t5 {
+    use super::*;
+
+    bridged_group! {
+        #![uniq(*b"1234567812345678")]
+        struct Thing(usize);
+    }
+
+    #[test]
+    fn tuple_struct() {
+        let (_,t_usize) = usize::radt();
+        let r = RADT {
+            uniqueness: *b"1234567812345678",
+            items: vec![
+                RADTItem::Product(vec![
+                    RADTItem::ExternalType(t_usize),
+                ]),
+            ],
+        };
+        assert_eq!(<Thing as Bridged>::radt(), (r.clone(), r.item_ref(0)));
     }
 }
