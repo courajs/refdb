@@ -75,7 +75,40 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
                     },
                 }
             },
-            _ => todo!(),
+            Def::Enum(EnumDef{variants,..}) => {
+                let variants = variants.iter().map(|(_,fields)| {
+                    match fields {
+                        ItemFields::Unit => quote! { rf0::types::RADTItem::Sum(Vec::new()) },
+                        ItemFields::TupleLike(types) => {
+                            let fields = types.iter().map(|ty| ty_to_tokens(ty, &name_to_cycle_refs));
+                            quote! {
+                                rf0::types::RADTItem::Product(vec![
+                                    #(
+                                        #fields
+                                    ),*
+                                ])
+                            }
+                        },
+                        ItemFields::StructLike(named_fields) => {
+                            let fields = named_fields.iter().map(|(_,ty)| ty_to_tokens(ty, &name_to_cycle_refs));
+                            quote! {
+                                rf0::types::RADTItem::Product(vec![
+                                    #(
+                                        #fields
+                                    ),*
+                                ])
+                            }
+                        },
+                    }
+                });
+                quote! {
+                    rf0::types::RADTItem::Sum(vec![
+                        #(
+                            #variants
+                        ),*
+                    ])
+                }
+            },
         }
     }).collect();
 
@@ -220,6 +253,15 @@ impl<'ast> Visit<'ast> for DefinitionsCollector {
         self.defs.push(Def::Struct(StructDef {
             name: s.ident.clone(),
             fields: gather_fields(&s.fields, &self.in_names),
+        }));
+    }
+
+    fn visit_item_enum(&mut self, e: &'ast ItemEnum) {
+        self.defs.push(Def::Enum(EnumDef {
+            name: e.ident.clone(),
+            variants: e.variants.iter().map(|var| {
+                (var.ident.clone(), gather_fields(&var.fields, &self.in_names))
+            }).collect(),
         }));
     }
 }

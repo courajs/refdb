@@ -88,7 +88,6 @@ mod t4 {
 
     #[test]
     fn cycle_ref() {
-        let (_,t_usize) = usize::radt();
         let r = RADT {
             uniqueness: *b"1234567812345678",
             items: vec![
@@ -120,6 +119,26 @@ mod t5 {
                 RADTItem::Product(vec![
                     RADTItem::ExternalType(t_usize),
                 ]),
+            ],
+        };
+        assert_eq!(<Thing as Bridged>::radt(), (r.clone(), r.item_ref(0)));
+    }
+}
+
+mod t6 {
+    use super::*;
+
+    bridged_group! {
+        #![uniq(*b"1234567812345678")]
+        enum Thing {}
+    }
+
+    #[test]
+    fn hello_enum() {
+        let r = RADT {
+            uniqueness: *b"1234567812345678",
+            items: vec![
+                RADTItem::Sum(Vec::new()),
             ],
         };
         assert_eq!(<Thing as Bridged>::radt(), (r.clone(), r.item_ref(0)));
