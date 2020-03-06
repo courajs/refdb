@@ -191,3 +191,35 @@ mod t7 {
         assert_eq!(<Thing as Bridged>::radt(), (r.clone(), r.item_ref(0)));
     }
 }
+
+mod t8 {
+    use super::*;
+
+    bridged_group! {
+        #![uniq(*b"1234567812345678")]
+        struct Thing(Vec<usize>);
+    }
+
+    #[test]
+    fn handle_vec() {
+        let (_,t_usize) = usize::radt();
+        let r = RADT {
+            uniqueness: *b"1234567812345678",
+            items: vec![
+                RADTItem::Product(vec![
+                    RADTItem::CycleRef(2),
+                ]),
+                RADTItem::Product(Vec::new()),
+                RADTItem::Sum(vec![
+                    RADTItem::CycleRef(1),
+                    RADTItem::CycleRef(3),
+                ]),
+                RADTItem::Product(vec![
+                    RADTItem::ExternalType(t_usize),
+                    RADTItem::CycleRef(2),
+                ]),
+            ],
+        };
+        assert_eq!(<Thing as Bridged>::radt(), (r.clone(), r.item_ref(0)));
+    }
+}

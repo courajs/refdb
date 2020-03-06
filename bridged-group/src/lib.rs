@@ -3,8 +3,8 @@
 extern crate proc_macro;
 
 use std::collections::HashMap;
+use std::ops::Deref;
 
-use pretty_sure::sure;
 use proc_macro::TokenStream;
 use quote::*;
 use syn::*;
@@ -12,15 +12,22 @@ use syn::visit_mut::VisitMut;
 use syn::visit::*;
 use proc_macro2::TokenStream as TwokenStream;
 
+use pretty_sure::sure;
+use indexmap::IndexSet;
+
 #[proc_macro]
 pub fn bridged_group(ts: TokenStream) -> TokenStream {
     let t: File = parse(ts).expect("b");
     bridged_group_impl(t).into_token_stream().into()
 }
 
-fn ty_to_radt_tokens(ty: &Ty, locals: &HashMap<&Ident, usize>) -> TwokenStream {
+fn ty_to_radt_tokens(ty: &Ty, locals: &HashMap<&Ident, usize>, lists: &HashMap<&Ty, usize>) -> TwokenStream {
     match ty {
-        Ty::Box(inner) => ty_to_radt_tokens(inner, locals),
+        Ty::Box(inner) => ty_to_radt_tokens(inner, locals, lists),
+        Ty::Vec(inner) => {
+            let p = lists.get(inner.deref()).unwrap();
+            quote! { rf0::types::RADTItem::CycleRef(#p) }
+        },
         Ty::Ingroup(ident) => {
             let p = locals.get(ident).unwrap();
             quote! { rf0::types::RADTItem::CycleRef(#p) }
@@ -50,70 +57,87 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
 
     let mut defs_finder = DefinitionsCollector::new(names.clone());
     defs_finder.visit_file(&file);
-    // dbg!(defs_finder.defs);
 
-    let radt_items: Vec<_> = defs_finder.defs.iter().map(|def| {
+    let mut vectorized_types = IndexSet::new();
+    for def in defs_finder.defs.iter() {
         match def {
             Def::Struct(StructDef{fields, ..}) => {
-                match fields {
-                    ItemFields::Unit => quote! { rf0::types::RADTItem::Product(Vec::new()) },
-                    ItemFields::TupleLike(types) => {
-                        let fields = types.iter().map(|ty| ty_to_radt_tokens(ty, &name_to_cycle_refs));
-                        quote! {
-                            rf0::types::RADTItem::Product(vec![
-                                #(
-                                    #fields),*
-                            ])
+                for ty in fields.types().into_iter() {
+                    if let Ty::Vec(inner) = ty {
+                        vectorized_types.insert(*inner);
+                    }
+                }
+            },
+            Def::Enum(EnumDef{variants,..}) => {
+                for (_,fields) in variants.iter() {
+                    for ty in fields.types().into_iter() {
+                        if let Ty::Vec(inner) = ty {
+                            vectorized_types.insert(*inner);
                         }
-                    },
-                    ItemFields::StructLike(named_fields) => {
-                        let fields = named_fields.iter().map(|(_,ty)| ty_to_radt_tokens(ty, &name_to_cycle_refs));
-                        quote! {
-                            rf0::types::RADTItem::Product(vec![
-                                #(
-                                    #fields
-                                ),*
-                            ])
-                        }
-                    },
+                    }
+                }
+            }
+        }
+    }
+    let len = defs_finder.defs.len();
+    let mut ty_to_vec_index: HashMap<&Ty, usize> = vectorized_types.iter().enumerate().map(|(i,ty)| {
+        // 2i because there's a cons and a list entry for each type, plus one for the shared nil
+        // And, they're inserted after all the base defined types
+        (ty, len + 2*i + 1)
+    }).collect();
+    
+    let ref_for_ty = |ty: &Ty| -> TwokenStream {
+        ty_to_radt_tokens(ty, &name_to_cycle_refs, &ty_to_vec_index)
+    };
+
+    let mut radt_items = Vec::new();
+
+    radt_items.extend(defs_finder.defs.iter().map(|def| {
+        match def {
+            Def::Struct(StructDef{fields, ..}) => {
+                let fs = fields.types().into_iter().map(|ty|ref_for_ty(&ty));
+                quote! {
+                    rf0::types::RADTItem::Product(vec![
+                        #(#fs),*
+                    ])
                 }
             },
             Def::Enum(EnumDef{variants,..}) => {
                 let variants = variants.iter().map(|(_,fields)| {
-                    match fields {
-                        ItemFields::Unit => quote! { rf0::types::RADTItem::Product(Vec::new()) },
-                        ItemFields::TupleLike(types) => {
-                            let fields = types.iter().map(|ty| ty_to_radt_tokens(ty, &name_to_cycle_refs));
-                            quote! {
-                                rf0::types::RADTItem::Product(vec![
-                                    #(
-                                        #fields
-                                    ),*
-                                ])
-                            }
-                        },
-                        ItemFields::StructLike(named_fields) => {
-                            let fields = named_fields.iter().map(|(_,ty)| ty_to_radt_tokens(ty, &name_to_cycle_refs));
-                            quote! {
-                                rf0::types::RADTItem::Product(vec![
-                                    #(
-                                        #fields
-                                    ),*
-                                ])
-                            }
-                        },
+                    let fs = fields.types().into_iter().map(|ty|ref_for_ty(&ty));
+                    quote! {
+                        rf0::types::RADTItem::Product(vec![
+                            #(#fs),*
+                        ])
                     }
                 });
                 quote! {
                     rf0::types::RADTItem::Sum(vec![
-                        #(
-                            #variants
-                        ),*
+                        #(#variants),*
                     ])
                 }
             },
         }
-    }).collect();
+    }));
+
+    if vectorized_types.len() > 0 {
+        let nil_index = radt_items.len();
+        radt_items.push(quote!{rf0::types::RADTItem::Product(Vec::new())});
+        radt_items.extend(ty_to_vec_index.iter().map(|(ty, list_index)| {
+            let cons_index = list_index + 1;
+            let val = ref_for_ty(ty);
+            quote! {
+                rf0::types::RADTItem::Sum(vec![
+                    rf0::types::RADTItem::CycleRef(#nil_index),
+                    rf0::types::RADTItem::CycleRef(#cons_index),
+                ]),
+                rf0::types::RADTItem::Product(vec![
+                    #val,
+                    rf0::types::RADTItem::CycleRef(#list_index),
+                ])
+            }
+        }));
+    }
 
     /*
     let items: Vec<_> = field_finder.structs.iter().map(|(ty, fields)| {
@@ -210,34 +234,48 @@ impl<'ast> Visit<'ast> for ItemNamesCollector {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Hash, Eq, Debug, Clone, PartialEq)]
 enum Def {
     Struct(StructDef),
     Enum(EnumDef),
 }
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Hash, Eq, Debug, Clone, PartialEq)]
 struct StructDef {
     name: Ident,
     fields: ItemFields,
 }
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Hash, Eq, Debug, Clone, PartialEq)]
 struct EnumDef {
     name: Ident,
     variants: Vec<(Ident, ItemFields)>,
 }
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Hash, Eq, Debug, Clone, PartialEq)]
 enum ItemFields {
     Unit,
     TupleLike(Vec<Ty>),
     StructLike(Vec<(Ident, Ty)>)
 }
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Hash, Eq, Debug, Clone, PartialEq)]
 enum Ty {
     Box(Box<Ty>),
-    // Vector(Box<Ty>),
-    // Tuple(Vec<Ty>),
+    Vec(Box<Ty>),
+    // Hash
+    // Map
+    // ? Tuple(Vec<Ty>),
     Ingroup(Ident),
     Other(Type),
+}
+
+impl ItemFields {
+    fn types(&self) -> Vec<Ty> {
+        match self {
+            ItemFields::Unit => Vec::new(),
+            ItemFields::TupleLike(fs) => fs.clone(),
+            ItemFields::StructLike(fs) => {
+                fs.iter().map(|(_,ty)|ty).cloned().collect()
+            }
+        }
+    }
 }
 
 
@@ -280,13 +318,14 @@ fn gather_fields(f: &Fields, in_group: &[Ident]) -> ItemFields {
         },
     }
 }
+
 fn interpret_type(ty: &Type, in_group: &[Ident]) -> Ty {
     if let Type::Path(TypePath {path, ..}) = ty {
-        if is_parameterized_ident(path, "Box") {
-            let args = sure!(&path.segments.last().unwrap().arguments, PathArguments::AngleBracketed(AngleBracketedGenericArguments{args,..}) => args);
-            let garg = args.first().unwrap();
-            let inner_ty = sure!(garg, GenericArgument::Type(inner) => inner);
-            return Ty::Box(Box::new(interpret_type(inner_ty, in_group)));
+        if let Some(inners) = is_parameterized_ident(path, "Box") {
+            return Ty::Box(Box::new(interpret_type(inners[0], in_group)));
+        }
+        if let Some(inners) = is_parameterized_ident(path, "Vec") {
+            return Ty::Vec(Box::new(interpret_type(inners[0], in_group)));
         }
         if let Some(n) = in_group.iter().find(|n| path.is_ident(*n)) {
             return Ty::Ingroup(n.clone());
@@ -294,9 +333,17 @@ fn interpret_type(ty: &Type, in_group: &[Ident]) -> Ty {
     }
     return Ty::Other(ty.clone());
 }
-fn is_parameterized_ident(path: &Path, id: &str) -> bool {
-    path.segments.len() == 1 &&
-        path.segments.first().unwrap().ident == id
+
+fn is_parameterized_ident<'a>(path: &'a Path, id: &str) -> Option<Vec<&'a Type>> {
+    if path.segments.len() == 1 && path.segments.first().unwrap().ident == id {
+        let args = sure!(&path.segments.first().unwrap().arguments, PathArguments::AngleBracketed(AngleBracketedGenericArguments{args,..}) => args);
+        let inners = args.iter().map(|garg| {
+            sure!(garg, GenericArgument::Type(ty) => ty)
+        }).collect();
+        Some(inners)
+    } else {
+        None
+    }
 }
 
 
