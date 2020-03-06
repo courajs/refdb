@@ -321,11 +321,10 @@ fn gather_fields(f: &Fields, in_group: &[Ident]) -> ItemFields {
 
 fn interpret_type(ty: &Type, in_group: &[Ident]) -> Ty {
     if let Type::Path(TypePath {path, ..}) = ty {
-        if let Some(inners) = is_parameterized_ident(path, "Box") {
-            return Ty::Box(Box::new(interpret_type(inners[0], in_group)));
-        }
-        if let Some(inners) = is_parameterized_ident(path, "Vec") {
-            return Ty::Vec(Box::new(interpret_type(inners[0], in_group)));
+        match to_simple_path(path).deref() {
+            "Box" => return Ty::Box(Box::new(get_main_generic_args(path, in_group).remove(0))),
+            "Vec" => return Ty::Vec(Box::new(get_main_generic_args(path, in_group).remove(0))),
+            _ => ()
         }
         if let Some(n) = in_group.iter().find(|n| path.is_ident(*n)) {
             return Ty::Ingroup(n.clone());
@@ -334,16 +333,26 @@ fn interpret_type(ty: &Type, in_group: &[Ident]) -> Ty {
     return Ty::Other(ty.clone());
 }
 
-fn is_parameterized_ident<'a>(path: &'a Path, id: &str) -> Option<Vec<&'a Type>> {
-    if path.segments.len() == 1 && path.segments.first().unwrap().ident == id {
-        let args = sure!(&path.segments.first().unwrap().arguments, PathArguments::AngleBracketed(AngleBracketedGenericArguments{args,..}) => args);
-        let inners = args.iter().map(|garg| {
-            sure!(garg, GenericArgument::Type(ty) => ty)
-        }).collect();
-        Some(inners)
-    } else {
-        None
+fn get_main_generic_args(path: &Path, in_group: &[Ident]) -> Vec<Ty> {
+    let args = sure!(&path.segments.last().unwrap().arguments, PathArguments::AngleBracketed(AngleBracketedGenericArguments{args,..}) => args);
+    args.iter().map(|garg| {
+        let t = sure!(garg, GenericArgument::Type(t) => t);
+        interpret_type(t, in_group)
+    }).collect()
+}
+
+fn to_simple_path(path: &Path) -> String {
+    let mut s = String::new();
+    let mut first = true;
+    for seg in path.segments.iter() {
+        if first {
+            first = false;
+        } else {
+            s.push_str("::");
+        }
+        s.push_str(&seg.ident.to_string());
     }
+    s
 }
 
 
