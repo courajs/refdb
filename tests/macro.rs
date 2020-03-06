@@ -224,7 +224,7 @@ mod t8 {
     }
 }
 
-mod t10 {
+mod t9 {
     use super::*;
     use std::collections::BTreeMap;
 
@@ -279,5 +279,29 @@ mod t10 {
         };
         assert_eq!(<Thing as Bridged>::radt(), (r.clone(), r.item_ref(0)));
         assert_eq!(<Other as Bridged>::radt(), (r.clone(), r.item_ref(1)));
+    }
+}
+
+mod t10 {
+    use super::*;
+    use rf0::types::TypeRef;
+
+    bridged_group! {
+        #![uniq(*b"1234567812345678")]
+        struct Thing(Hash!(usize::radt().1));
+    }
+
+    #[test]
+    fn handle_hash() {
+        let (_,t_usize) = usize::radt();
+        let r = RADT {
+            uniqueness: *b"1234567812345678",
+            items: vec![
+                RADTItem::Product(vec![
+                    RADTItem::ExternalType(t_usize),
+                ]),
+            ],
+        };
+        assert_eq!(<Thing as Bridged>::radt(), (r.clone(), r.item_ref(0)));
     }
 }

@@ -32,6 +32,9 @@ fn ty_to_radt_tokens(ty: &Ty, locals: &HashMap<Ty, usize>) -> TwokenStream {
             let p = locals.get(ty).unwrap();
             quote! { rf0::types::RADTItem::CycleRef(#p) }
         }
+        Ty::Hash(e) => {
+            quote! { rf0::types::RADTItem::ExternalType(#e) }
+        }
         Ty::Ingroup(ident) => {
             let p = locals.get(ty).unwrap();
             quote! { rf0::types::RADTItem::CycleRef(#p) }
@@ -56,6 +59,7 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
 
     let mut defs_finder = DefinitionsCollector::new(names.clone());
     defs_finder.visit_file(&file);
+    StripHashMacros.visit_file_mut(&mut file);
 
     let num_main_types = defs_finder.defs.len();
 
@@ -166,34 +170,6 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
             }
         }));
     }
-
-    /*
-    let items: Vec<_> = field_finder.structs.iter().map(|(ty, fields)| {
-        let f = fields.into_iter().map(|ty| {
-            match ty {
-                Ty::Ingroup(ident) => {
-                    let p = names.iter().position(|n| n == ident).unwrap();
-                    quote! { rf0::types::RADTItem::CycleRef(#p) }
-                },
-                Ty::Other(ty) => {
-                    quote! {
-                        {
-                            let (_,typeref) = <#ty as rf0::bridge::Bridged>::radt();
-                            rf0::types::RADTItem::ExternalType(typeref)
-                        }
-                    }
-                }
-            }
-        });
-        quote! {
-            rf0::types::RADTItem::Product(vec![
-                #(
-                    #f
-                ),*
-            ])
-        }
-    }).collect();
-    */
 
     let impls = names.into_iter().enumerate().map(|(index, ident)| {
         let uniq = uniq.clone();
@@ -311,8 +287,7 @@ enum Ty {
     Box(Box<Ty>),
     Vec(Box<Ty>),
     Map(Box<(Ty, Ty)>),
-    // Hash
-    // Map
+    Hash(Expr),
     // ? Tuple(Vec<Ty>),
     Ingroup(Ident),
     Other(Type),
@@ -386,7 +361,25 @@ fn interpret_type(ty: &Type, in_group: &[Ident]) -> Ty {
             return Ty::Ingroup(n.clone());
         }
     }
+    if let Type::Macro(TypeMacro{mac:Macro{path, tokens,..}}) = ty {
+        if to_simple_path(path) == "Hash" {
+            return Ty::Hash(parse2::<Expr>(tokens.clone()).unwrap());
+        }
+    }
     return Ty::Other(ty.clone());
+}
+
+struct StripHashMacros;
+impl VisitMut for StripHashMacros {
+    fn visit_field_mut(&mut self, f: &mut Field) {
+        if let Type::Macro(TypeMacro{mac: Macro{path,..}}) = &f.ty {
+            if to_simple_path(path) == "Hash" {
+                let hash = quote! { rf0::core::Hash };
+                let p = parse2::<Type>(hash).unwrap();
+                f.ty = p;
+            }
+        }
+    }
 }
 
 fn get_main_generic_args(path: &Path, in_group: &[Ident]) -> Vec<Ty> {
