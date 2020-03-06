@@ -21,15 +21,19 @@ pub fn bridged_group(ts: TokenStream) -> TokenStream {
     bridged_group_impl(t).into_token_stream().into()
 }
 
-fn ty_to_radt_tokens(ty: &Ty, locals: &HashMap<&Ident, usize>, lists: &HashMap<&Ty, usize>) -> TwokenStream {
+fn ty_to_radt_tokens(ty: &Ty, locals: &HashMap<Ty, usize>) -> TwokenStream {
     match ty {
-        Ty::Box(inner) => ty_to_radt_tokens(inner, locals, lists),
-        Ty::Vec(inner) => {
-            let p = lists.get(inner.deref()).unwrap();
+        Ty::Box(inner) => ty_to_radt_tokens(inner, locals),
+        Ty::Vec(_) => {
+            let p = locals.get(ty).unwrap();
             quote! { rf0::types::RADTItem::CycleRef(#p) }
         },
+        Ty::Map(_) => {
+            let p = locals.get(ty).unwrap();
+            quote! { rf0::types::RADTItem::CycleRef(#p) }
+        }
         Ty::Ingroup(ident) => {
-            let p = locals.get(ident).unwrap();
+            let p = locals.get(ty).unwrap();
             quote! { rf0::types::RADTItem::CycleRef(#p) }
         },
         Ty::Other(ast_ty) => {
@@ -50,44 +54,43 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
     name_finder.visit_file(&file);
     let names = name_finder.names;
 
-    let mut name_to_cycle_refs = HashMap::new();
-    for (i, name) in names.iter().enumerate() {
-        name_to_cycle_refs.insert(name, i);
-    }
-
     let mut defs_finder = DefinitionsCollector::new(names.clone());
     defs_finder.visit_file(&file);
 
+    let num_main_types = defs_finder.defs.len();
+
     let mut vectorized_types = IndexSet::new();
+    let mut mapped_types = IndexSet::new();
     for def in defs_finder.defs.iter() {
-        match def {
-            Def::Struct(StructDef{fields, ..}) => {
-                for ty in fields.types().into_iter() {
-                    if let Ty::Vec(inner) = ty {
-                        vectorized_types.insert(*inner);
-                    }
-                }
-            },
-            Def::Enum(EnumDef{variants,..}) => {
-                for (_,fields) in variants.iter() {
-                    for ty in fields.types().into_iter() {
-                        if let Ty::Vec(inner) = ty {
-                            vectorized_types.insert(*inner);
-                        }
-                    }
-                }
+        for ty in def.types() {
+            match ty {
+                Ty::Vec(inner) => {
+                    vectorized_types.insert(*inner);
+                },
+                Ty::Map(inner) => {
+                    mapped_types.insert((inner.0, inner.1));
+                },
+                _ => ()
             }
         }
     }
-    let len = defs_finder.defs.len();
-    let mut ty_to_vec_index: HashMap<&Ty, usize> = vectorized_types.iter().enumerate().map(|(i,ty)| {
+
+    let mut locals = HashMap::new();
+    locals.extend(defs_finder.defs.iter().enumerate().map(|(i, def)| {
+        (Ty::Ingroup(def.name()), i)
+    }));
+    locals.extend(vectorized_types.iter().enumerate().map(|(i,ty)| {
         // 2i because there's a cons and a list entry for each type, plus one for the shared nil
         // And, they're inserted after all the base defined types
-        (ty, len + 2*i + 1)
-    }).collect();
+        (Ty::Vec(Box::new(ty.clone())), num_main_types + 2*i + 1)
+    }));
+    locals.extend(mapped_types.iter().enumerate().map(|(i, (from,to))| {
+        let base = num_main_types + 1 + 2*vectorized_types.len();
+        (Ty::Map(Box::new((from.clone(), to.clone()))), base + 3*i) 
+    }));
     
     let ref_for_ty = |ty: &Ty| -> TwokenStream {
-        ty_to_radt_tokens(ty, &name_to_cycle_refs, &ty_to_vec_index)
+        ty_to_radt_tokens(ty, &locals)
     };
 
     let mut radt_items = Vec::new();
@@ -120,10 +123,13 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
         }
     }));
 
-    if vectorized_types.len() > 0 {
-        let nil_index = radt_items.len();
+    if locals.len() > num_main_types {
         radt_items.push(quote!{rf0::types::RADTItem::Product(Vec::new())});
-        radt_items.extend(ty_to_vec_index.iter().map(|(ty, list_index)| {
+    }
+    let nil_index = num_main_types;
+    if vectorized_types.len() > 0 {
+        radt_items.extend(vectorized_types.iter().enumerate().map(|(i, ty)| {
+            let list_index = num_main_types + 2*i + 1;
             let cons_index = list_index + 1;
             let val = ref_for_ty(ty);
             quote! {
@@ -135,6 +141,28 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
                     #val,
                     rf0::types::RADTItem::CycleRef(#list_index),
                 ])
+            }
+        }));
+    }
+    if mapped_types.len() > 0 {
+        radt_items.extend(mapped_types.iter().enumerate().map(|(i, (from, to))| {
+            // each main item, shared nil, cons+list for each vec
+            let base = num_main_types + 1 + 2*vectorized_types.len();
+            let map_index = base + 3*i;
+            let cons_index = map_index + 1;
+            let entry_index = map_index + 2;
+            let key = ref_for_ty(from);
+            let val = ref_for_ty(to);
+            quote! {
+                rf0::types::RADTItem::Sum(vec![
+                    rf0::types::RADTItem::CycleRef(#nil_index),
+                    rf0::types::RADTItem::CycleRef(#cons_index),
+                ]),
+                rf0::types::RADTItem::Product(vec![
+                    rf0::types::RADTItem::CycleRef(#entry_index),
+                    rf0::types::RADTItem::CycleRef(#map_index),
+                ]),
+                rf0::types::RADTItem::Product(vec![#key, #val])
             }
         }));
     }
@@ -239,6 +267,29 @@ enum Def {
     Struct(StructDef),
     Enum(EnumDef),
 }
+impl Def {
+    fn name(&self) -> Ident {
+        match self {
+            Def::Struct(StructDef{name,..}) => name.clone(),
+            Def::Enum(EnumDef{name,..}) => name.clone(),
+        }
+    }
+
+    fn types(&self) -> Vec<Ty> {
+        match self {
+            Def::Struct(StructDef{fields,..}) => {
+                return fields.types();
+            },
+            Def::Enum(EnumDef{variants,..}) => {
+                let mut all = Vec::new();
+                for (i, fields) in variants.iter() {
+                    all.extend(fields.types().into_iter());
+                }
+                return all;
+            }
+        }
+    }
+}
 #[derive(Hash, Eq, Debug, Clone, PartialEq)]
 struct StructDef {
     name: Ident,
@@ -259,6 +310,7 @@ enum ItemFields {
 enum Ty {
     Box(Box<Ty>),
     Vec(Box<Ty>),
+    Map(Box<(Ty, Ty)>),
     // Hash
     // Map
     // ? Tuple(Vec<Ty>),
@@ -322,8 +374,12 @@ fn gather_fields(f: &Fields, in_group: &[Ident]) -> ItemFields {
 fn interpret_type(ty: &Type, in_group: &[Ident]) -> Ty {
     if let Type::Path(TypePath {path, ..}) = ty {
         match to_simple_path(path).deref() {
-            "Box" => return Ty::Box(Box::new(get_main_generic_args(path, in_group).remove(0))),
-            "Vec" => return Ty::Vec(Box::new(get_main_generic_args(path, in_group).remove(0))),
+            "Box" => return Ty::Box(Box::new(get_main_generic_args(path, in_group)[0].clone())),
+            "Vec" => return Ty::Vec(Box::new(get_main_generic_args(path, in_group)[0].clone())),
+            "BTreeMap" | "collections::BTreeMap" | "std::collections::BTreeMap" => {
+                let args = get_main_generic_args(path, in_group);
+                return Ty::Map(Box::new((args[0].clone(), args[1].clone())));
+            }
             _ => ()
         }
         if let Some(n) = in_group.iter().find(|n| path.is_ident(*n)) {

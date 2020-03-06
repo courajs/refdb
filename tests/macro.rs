@@ -224,60 +224,60 @@ mod t8 {
     }
 }
 
-// mod t10 {
-//     use super::*;
-//     use std::collections::BTreeMap;
-// 
-//     bridged_group! {
-//         #![uniq(*b"1234567812345678")]
-//         struct Thing(BTreeMap<usize, usize>);
-//         struct Other(Vec<usize>);
-//     }
-// 
-//     #[test]
-//     fn handle_map() {
-//         let (_,t_usize) = usize::radt();
-//         let r = RADT {
-//             uniqueness: *b"1234567812345678",
-//             items: vec![
-//                 // 0: thing
-//                 RADTItem::Product(vec![
-//                     RADTItem::CycleRef(2),
-//                 ]),
-//                 // 1: other
-//                 RADTItem::Product(vec![
-//                     RADTItem::CycleRef(2),
-//                 ]),
-//                 // 2: nil
-//                 RADTItem::Product(Vec::new()),
-//                 // 3: list usize
-//                 RADTItem::Sum(vec![
-//                     RADTItem::CycleRef(2),
-//                     RADTItem::CycleRef(4),
-//                 ]),
-//                 // 4: cons usize
-//                 RADTItem::Product(vec![
-//                     RADTItem::ExternalType(t_usize),
-//                     RADTItem::CycleRef(3),
-//                 ]),
-//                 // 5: list map entry
-//                 RADTItem::Sum(vec![
-//                     RADTItem::CycleRef(2),
-//                     RADTItem::CycleRef(6),
-//                 ]),
-//                 // 6: cons map entry
-//                 RADTItem::Product(vec![
-//                     RADTItem::CycleRef(7),
-//                     RADTItem::CycleRef(5),
-//                 ]),
-//                 // 7: map entry
-//                 RADTItem::Product(vec![
-//                     RADTItem::ExternalType(t_usize),
-//                     RADTItem::ExternalType(t_usize),
-//                 ]),
-//             ],
-//         };
-//         assert_eq!(<Thing as Bridged>::radt(), (r.clone(), r.item_ref(0)));
-//         assert_eq!(<Other as Bridged>::radt(), (r.clone(), r.item_ref(1)));
-//     }
-// }
+mod t10 {
+    use super::*;
+    use std::collections::BTreeMap;
+
+    bridged_group! {
+        #![uniq(*b"1234567812345678")]
+        struct Thing(BTreeMap<usize, usize>);
+        struct Other(Vec<usize>);
+    }
+
+    #[test]
+    fn handle_map() {
+        let (_,t_usize) = usize::radt();
+        let r = RADT {
+            uniqueness: *b"1234567812345678",
+            items: vec![
+                // 0: thing
+                RADTItem::Product(vec![
+                    RADTItem::CycleRef(5),
+                ]),
+                // 1: other
+                RADTItem::Product(vec![
+                    RADTItem::CycleRef(3),
+                ]),
+                // 2: nil
+                RADTItem::Product(Vec::new()),
+                // 3: list usize
+                RADTItem::Sum(vec![
+                    RADTItem::CycleRef(2),
+                    RADTItem::CycleRef(4),
+                ]),
+                // 4: cons usize
+                RADTItem::Product(vec![
+                    RADTItem::ExternalType(t_usize),
+                    RADTItem::CycleRef(3),
+                ]),
+                // 5: list map entry
+                RADTItem::Sum(vec![
+                    RADTItem::CycleRef(2),
+                    RADTItem::CycleRef(6),
+                ]),
+                // 6: cons map entry
+                RADTItem::Product(vec![
+                    RADTItem::CycleRef(7),
+                    RADTItem::CycleRef(5),
+                ]),
+                // 7: map entry
+                RADTItem::Product(vec![
+                    RADTItem::ExternalType(t_usize),
+                    RADTItem::ExternalType(t_usize),
+                ]),
+            ],
+        };
+        assert_eq!(<Thing as Bridged>::radt(), (r.clone(), r.item_ref(0)));
+        assert_eq!(<Other as Bridged>::radt(), (r.clone(), r.item_ref(1)));
+    }
+}
