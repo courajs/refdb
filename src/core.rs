@@ -111,7 +111,6 @@ impl Decodable for Blob {
 
 #[macro_export]
 macro_rules! sure {
-    // sure!(val, Enum::Variant{field, name: Enum::Variant2(num)} => (field, num))
     ($target:expr, $p:pat => $res:expr; $else:expr) => {
         match $target {
             $p => $res,
@@ -122,9 +121,6 @@ macro_rules! sure {
         sure!($target, $p => $res; panic!("Expected {} to match pattern: {}", stringify!($target), stringify!($p)))
     };
 
-    // sure!(v, (a,b))
-    // expands to
-    // sure!(v, (a,b) => (a,b))
     ($target:expr, $pat:tt; $else:expr) => {
         sure!($target, $pat => $pat; $else)
     };
@@ -132,9 +128,6 @@ macro_rules! sure {
         sure!($target, $pat => $pat)
     };
 
-    // sure!(let [a,b] = v[..]);
-    // expands to
-    // let [a,b] = sure!(v[..], [a,b] => [a,b]);
     (let $pat:tt = $target:expr; $else:expr) => {
         let $pat = sure!($target, $pat; $else);
     };

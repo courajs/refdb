@@ -130,15 +130,62 @@ mod t6 {
 
     bridged_group! {
         #![uniq(*b"1234567812345678")]
-        enum Thing {}
+        enum Thing {
+            A {
+                x: Other,
+                y: usize,
+            },
+            B(Other),
+            C(usize),
+            D,
+        }
+        struct Other;
     }
 
     #[test]
     fn hello_enum() {
+        let (_,t_usize) = usize::radt();
         let r = RADT {
             uniqueness: *b"1234567812345678",
             items: vec![
-                RADTItem::Sum(Vec::new()),
+                RADTItem::Sum(vec![
+                    RADTItem::Product(vec![
+                        RADTItem::CycleRef(1),
+                        RADTItem::ExternalType(t_usize),
+                    ]),
+                    RADTItem::Product(vec![
+                        RADTItem::CycleRef(1),
+                    ]),
+                    RADTItem::Product(vec![
+                        RADTItem::ExternalType(t_usize),
+                    ]),
+                    RADTItem::Product(Vec::new()),
+                ]),
+                RADTItem::Product(Vec::new()),
+            ],
+        };
+        assert_eq!(<Thing as Bridged>::radt(), (r.clone(), r.item_ref(0)));
+        assert_eq!(<Other as Bridged>::radt(), (r.clone(), r.item_ref(1)));
+    }
+}
+
+mod t7 {
+    use super::*;
+
+    bridged_group! {
+        #![uniq(*b"1234567812345678")]
+        struct Thing(Box<usize>);
+    }
+
+    #[test]
+    fn handle_box() {
+        let (_,t_usize) = usize::radt();
+        let r = RADT {
+            uniqueness: *b"1234567812345678",
+            items: vec![
+                RADTItem::Product(vec![
+                    RADTItem::ExternalType(t_usize),
+                ]),
             ],
         };
         assert_eq!(<Thing as Bridged>::radt(), (r.clone(), r.item_ref(0)));

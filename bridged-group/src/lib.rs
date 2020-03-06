@@ -4,11 +4,13 @@ extern crate proc_macro;
 
 use std::collections::HashMap;
 
+use pretty_sure::sure;
 use proc_macro::TokenStream;
 use quote::*;
 use syn::*;
 use syn::visit_mut::VisitMut;
 use syn::visit::*;
+use proc_macro2::TokenStream as TwokenStream;
 
 #[proc_macro]
 pub fn bridged_group(ts: TokenStream) -> TokenStream {
@@ -16,8 +18,9 @@ pub fn bridged_group(ts: TokenStream) -> TokenStream {
     bridged_group_impl(t).into_token_stream().into()
 }
 
-fn ty_to_tokens(ty: &Ty, locals: &HashMap<&Ident, usize>) -> impl ToTokens {
+fn ty_to_radt_tokens(ty: &Ty, locals: &HashMap<&Ident, usize>) -> TwokenStream {
     match ty {
+        Ty::Box(inner) => ty_to_radt_tokens(inner, locals),
         Ty::Ingroup(ident) => {
             let p = locals.get(ident).unwrap();
             quote! { rf0::types::RADTItem::CycleRef(#p) }
@@ -55,7 +58,7 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
                 match fields {
                     ItemFields::Unit => quote! { rf0::types::RADTItem::Product(Vec::new()) },
                     ItemFields::TupleLike(types) => {
-                        let fields = types.iter().map(|ty| ty_to_tokens(ty, &name_to_cycle_refs));
+                        let fields = types.iter().map(|ty| ty_to_radt_tokens(ty, &name_to_cycle_refs));
                         quote! {
                             rf0::types::RADTItem::Product(vec![
                                 #(
@@ -64,7 +67,7 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
                         }
                     },
                     ItemFields::StructLike(named_fields) => {
-                        let fields = named_fields.iter().map(|(_,ty)| ty_to_tokens(ty, &name_to_cycle_refs));
+                        let fields = named_fields.iter().map(|(_,ty)| ty_to_radt_tokens(ty, &name_to_cycle_refs));
                         quote! {
                             rf0::types::RADTItem::Product(vec![
                                 #(
@@ -78,9 +81,9 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
             Def::Enum(EnumDef{variants,..}) => {
                 let variants = variants.iter().map(|(_,fields)| {
                     match fields {
-                        ItemFields::Unit => quote! { rf0::types::RADTItem::Sum(Vec::new()) },
+                        ItemFields::Unit => quote! { rf0::types::RADTItem::Product(Vec::new()) },
                         ItemFields::TupleLike(types) => {
-                            let fields = types.iter().map(|ty| ty_to_tokens(ty, &name_to_cycle_refs));
+                            let fields = types.iter().map(|ty| ty_to_radt_tokens(ty, &name_to_cycle_refs));
                             quote! {
                                 rf0::types::RADTItem::Product(vec![
                                     #(
@@ -90,7 +93,7 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
                             }
                         },
                         ItemFields::StructLike(named_fields) => {
-                            let fields = named_fields.iter().map(|(_,ty)| ty_to_tokens(ty, &name_to_cycle_refs));
+                            let fields = named_fields.iter().map(|(_,ty)| ty_to_radt_tokens(ty, &name_to_cycle_refs));
                             quote! {
                                 rf0::types::RADTItem::Product(vec![
                                     #(
@@ -230,7 +233,7 @@ enum ItemFields {
 }
 #[derive(Debug, Clone, PartialEq)]
 enum Ty {
-    // Box(Box<Ty>),
+    Box(Box<Ty>),
     // Vector(Box<Ty>),
     // Tuple(Vec<Ty>),
     Ingroup(Ident),
@@ -279,11 +282,21 @@ fn gather_fields(f: &Fields, in_group: &[Ident]) -> ItemFields {
 }
 fn interpret_type(ty: &Type, in_group: &[Ident]) -> Ty {
     if let Type::Path(TypePath {path, ..}) = ty {
+        if is_parameterized_ident(path, "Box") {
+            let args = sure!(&path.segments.last().unwrap().arguments, PathArguments::AngleBracketed(AngleBracketedGenericArguments{args,..}) => args);
+            let garg = args.first().unwrap();
+            let inner_ty = sure!(garg, GenericArgument::Type(inner) => inner);
+            return Ty::Box(Box::new(interpret_type(inner_ty, in_group)));
+        }
         if let Some(n) = in_group.iter().find(|n| path.is_ident(*n)) {
             return Ty::Ingroup(n.clone());
         }
     }
     return Ty::Other(ty.clone());
+}
+fn is_parameterized_ident(path: &Path, id: &str) -> bool {
+    path.segments.len() == 1 &&
+        path.segments.first().unwrap().ident == id
 }
 
 
