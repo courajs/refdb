@@ -1,5 +1,7 @@
 #![allow(unused_mut, dead_code, unused_variables, unused_imports)]
 
+use std::collections::BTreeMap;
+
 use rf0::types::*;
 use rf0::core::*;
 use rf0::storage::Storable;
@@ -351,6 +353,56 @@ mod t11 {
             ]),
         };
         let (v, out_deps) = Thing(12).to_value();
+        assert_eq!(out_deps, deps);
+        assert_eq!(v, val);
+    }
+}
+
+mod t12 {
+    use super::*;
+
+    bridged_group! {
+        #![uniq(*b"1234567812345678")]
+        enum Thing {
+            A,
+            B(usize),
+            C(BTreeMap<Other, usize>),
+            D { x: Third },
+        }
+        #[derive(PartialEq, Eq, PartialOrd, Ord)]
+        struct Other;
+        struct Third {
+            yes: String,
+        }
+    }
+
+    #[test]
+    fn enum_to_value() {
+        let (r,tr) = Thing::radt();
+        let other = r.item_ref(1);
+        let (num, mut deps) = (12usize).to_value();
+        let num_hash = num.typing().hash();
+        deps.push(Item::Value(num));
+
+        let mut map = BTreeMap::new();
+        map.insert(Other, 12);
+        let input = Thing::C(map);
+
+        let val = TypedValue {
+            kind: tr,
+            value: RADTValue::Sum {
+                kind: 2,
+                value: Box::new(
+                    RADTValue::Sum { // map
+                        kind: 1,
+                        value: Box::new(
+                            RADTValue::Product(vec![RADTValue::Product(Vec::new()), RADTValue::Hash(num_hash)])
+                        )
+                    }
+                )
+            },
+        };
+        let (v, out_deps) = input.to_value();
         assert_eq!(out_deps, deps);
         assert_eq!(v, val);
     }
