@@ -60,12 +60,13 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
     let mut defs_finder = DefinitionsCollector::new(names.clone());
     defs_finder.visit_file(&file);
     StripHashMacros.visit_file_mut(&mut file);
+    let defs = defs_finder.defs;
 
-    let num_main_types = defs_finder.defs.len();
+    let num_main_types = defs.len();
 
     let mut vectorized_types = IndexSet::new();
     let mut mapped_types = IndexSet::new();
-    for def in defs_finder.defs.iter() {
+    for def in defs.iter() {
         for ty in def.types() {
             match ty {
                 Ty::Vec(inner) => {
@@ -80,7 +81,7 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
     }
 
     let mut locals = HashMap::new();
-    locals.extend(defs_finder.defs.iter().enumerate().map(|(i, def)| {
+    locals.extend(defs.iter().enumerate().map(|(i, def)| {
         (Ty::Ingroup(def.name()), i)
     }));
     locals.extend(vectorized_types.iter().enumerate().map(|(i,ty)| {
@@ -99,7 +100,7 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
 
     let mut radt_items = Vec::new();
 
-    radt_items.extend(defs_finder.defs.iter().map(|def| {
+    radt_items.extend(defs.iter().map(|def| {
         match def {
             Def::Struct(StructDef{fields, ..}) => {
                 let fs = fields.types().into_iter().map(|ty|ref_for_ty(&ty));
@@ -171,11 +172,54 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
         }));
     }
 
-    let impls = names.into_iter().enumerate().map(|(index, ident)| {
+    let type_ids = {
+        // let group_items = names.iter().map(|name| quote!{std::any::TypeId::of::<#name>()});
+        quote! {
+            let mut h = std::collections::HashSet::new();
+            #(h.insert(std::any::TypeId::of::<#names>());)*
+            h
+        }
+    };
+
+    let impls = defs.into_iter().enumerate().map(|(index, def)| {
+        let name = def.name();
         let uniq = uniq.clone();
         let items = radt_items.clone();
+        let to_value = match def {
+            Def::Struct(StructDef{fields,..}) => {
+                let field_values = match fields {
+                    ItemFields::Unit => Vec::new(),
+                    ItemFields::TupleLike(fields) => {
+                        (0..fields.len()).map(|i| {
+                            let index = syn::Index::from(i);
+                            quote! { self.#index.serialize(&mut deps, &group) }
+                        }).collect()
+                    },
+                    ItemFields::StructLike(fields) => {
+                        fields.iter().map(|(name,_ty)| {
+                            quote! { self.#name.serialize(&mut deps, &group) }
+                        }).collect()
+                    },
+                };
+                quote! {
+                    let mut deps = Vec::new();
+                    let group = Self::group_ids();
+                    let val = RADTValue::Product(vec![
+                        #(#field_values),*
+                    ]);
+                    let (_,typeref) = Self::radt();
+                    (TypedValue { kind: typeref, value: val }, deps)
+                }
+            },
+            Def::Enum(EnumDef{variants,..}) => {
+                quote!{panic!()}
+            },
+        };
         quote! {
-            impl rf0::bridge::Bridged for #ident {
+            impl rf0::bridge::Bridged for #name {
+                fn group_ids() -> std::collections::HashSet<std::any::TypeId> {
+                    #type_ids
+                }
                 fn radt() -> (rf0::types::RADT, rf0::types::TypeRef) {
                     let r = rf0::types::RADT {
                         uniqueness: #uniq,
@@ -187,7 +231,8 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
                     (r, t)
                 }
                 fn to_value(&self) -> (rf0::types::TypedValue, Vec<rf0::storage::Item>) {
-                    todo!()
+                    use rf0::bridge::SerializeToRADTValue;
+                    #to_value
                 }
                 fn from_value(v: &rf0::types::TypedValue, deps: &std::collections::HashMap<rf0::core::Hash, rf0::storage::Item>) -> Result<Self, rf0::error::MonsterError> {
                     todo!()

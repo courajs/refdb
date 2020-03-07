@@ -3,6 +3,7 @@
 use rf0::types::*;
 use rf0::core::*;
 use rf0::storage::Storable;
+use rf0::storage::Item;
 use rf0::bridge::*;
 use bridged_group::*;
 
@@ -284,7 +285,6 @@ mod t9 {
 
 mod t10 {
     use super::*;
-    use rf0::types::TypeRef;
 
     bridged_group! {
         #![uniq(*b"1234567812345678")]
@@ -327,5 +327,31 @@ mod t10 {
         };
         assert_eq!(<Thing as Bridged>::radt(), (r.clone(), r.item_ref(0)));
         assert_eq!(<Other as Bridged>::radt(), (r.clone(), r.item_ref(1)));
+    }
+}
+
+mod t11 {
+    use super::*;
+
+    bridged_group! {
+        #![uniq(*b"1234567812345678")]
+        struct Thing(usize);
+    }
+
+    #[test]
+    fn basic_to_value() {
+        let (_,tr) = Thing::radt();
+        let (num, mut deps) = (12usize).to_value();
+        let h = num.typing().hash();
+        deps.push(Item::Value(num));
+        let val = TypedValue {
+            kind: tr,
+            value: RADTValue::Product(vec![
+                      RADTValue::Hash(h),
+            ]),
+        };
+        let (v, out_deps) = Thing(12).to_value();
+        assert_eq!(out_deps, deps);
+        assert_eq!(v, val);
     }
 }

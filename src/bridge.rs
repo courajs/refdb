@@ -1,8 +1,10 @@
 // translations between rust structs and db values
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::collections::BTreeMap;
 use std::iter::FromIterator;
+use std::any::TypeId;
 
 use crate::core::*;
 use crate::types::*;
@@ -10,17 +12,83 @@ use crate::labels::*;
 use crate::storage::*;
 use crate::error::MonsterError;
 
-pub trait Bridged: Sized {
+pub trait Bridged: Sized + 'static {
     fn radt() -> (RADT, TypeRef);
     fn to_value(&self) -> (TypedValue, Vec<Item>);
     fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError>;
+    fn group_ids() -> HashSet<TypeId>;
 }
+
+pub trait SerializeToRADTValue {
+    fn serialize(&self, deps: &mut Vec<Item>, group: &HashSet<TypeId>) -> RADTValue;
+}
+impl SerializeToRADTValue for Hash {
+    fn serialize(&self, deps: &mut Vec<Item>, group: &HashSet<TypeId>) -> RADTValue {
+        RADTValue::Hash(*self)
+    }
+}
+impl<T> SerializeToRADTValue for T where T: Bridged {
+    fn serialize(&self, deps: &mut Vec<Item>, group: &HashSet<TypeId>) -> RADTValue {
+        let (tv, inner_deps) = self.to_value();
+        deps.extend(inner_deps);
+        if group.contains(&TypeId::of::<Self>()) {
+            return tv.value
+        } else {
+            let h = tv.typing().hash();
+            deps.push(Item::Value(tv));
+            RADTValue::Hash(h)
+        }
+    }
+}
+// impl<T> SerializeToRADTValue for Box<T> {
+//     fn serialize(&self, deps: &mut Vec<Item>) -> RADTValue {
+//         self.deref().serialize(deps)
+//     }
+// }
+impl<T> SerializeToRADTValue for Vec<T> where T: SerializeToRADTValue {
+    fn serialize(&self, deps: &mut Vec<Item>, group: &HashSet<TypeId>) -> RADTValue {
+        let empty = RADTValue::Sum{kind:0, value: Box::new(RADTValue::Product(Vec::new()))};
+        self.iter().rfold(empty, |acc, v| {
+            RADTValue::Sum {
+                kind: 1,
+                value: Box::new(
+                    RADTValue::Product(vec![
+                        v.serialize(deps, group),
+                        acc,
+                    ])
+                )
+            }
+        })
+    }
+}
+impl<K,V> SerializeToRADTValue for BTreeMap<K,V> where K: SerializeToRADTValue, V: SerializeToRADTValue {
+    fn serialize(&self, deps: &mut Vec<Item>, group: &HashSet<TypeId>) -> RADTValue {
+        let empty = RADTValue::Sum{kind:0, value: Box::new(RADTValue::Product(Vec::new()))};
+        self.iter().rfold(empty, |acc, (k, v)| {
+            RADTValue::Sum { // list
+                kind: 1,
+                value: Box::new(
+                    RADTValue::Product(vec![ // cons
+                        RADTValue::Product(vec![k.serialize(deps, group), v.serialize(deps, group)]), // entry
+                        acc,
+                    ])
+                ),
+            }
+        })
+    }
+}
+
 
 pub trait Labeled {
     fn label() -> LabelSet;
 }
 
 impl Bridged for String {
+    fn group_ids() -> HashSet<TypeId> {
+        let mut h = HashSet::new();
+        h.insert(TypeId::of::<Self>());
+        h
+    }
     fn radt() -> (RADT, TypeRef) {
         let t = RADT {
             uniqueness: b"core:utf8-------".to_owned(),
@@ -61,6 +129,9 @@ impl Bridged for String {
 }
 
 impl Bridged for TypeRef {
+    fn group_ids() -> HashSet<TypeId> {
+        todo!()
+    }
     fn radt() -> (RADT, TypeRef) {
         let (_, u_size) = usize::radt();
         let t = RADT {
@@ -117,6 +188,9 @@ impl Bridged for TypeRef {
 }
 
 impl Bridged for RADT {
+    fn group_ids() -> HashSet<TypeId> {
+        todo!()
+    }
     fn radt() -> (RADT, TypeRef) {
         let (_, typeref) = TypeRef::radt();
         let (_, u_size) = usize::radt();
@@ -331,6 +405,11 @@ fn translate_value_list_to_vec<T>(mut v: &RADTValue, mut f: impl FnMut(&RADTValu
 
 
 impl Bridged for usize {
+    fn group_ids() -> HashSet<TypeId> {
+        let mut h = HashSet::new();
+        h.insert(TypeId::of::<Self>());
+        h
+    }
     fn radt() -> (RADT, TypeRef) {
         let t = RADT {
             uniqueness: b"core:usize------".to_owned(),
@@ -378,6 +457,9 @@ impl Bridged for usize {
 
 
 impl Bridged for Env {
+    fn group_ids() -> HashSet<TypeId> {
+        todo!()
+    }
     fn radt() -> (RADT, TypeRef) {
         let (_,radt) = RADT::radt();
         let (_,labeling) = LabelSet::radt();
@@ -574,6 +656,9 @@ impl Labeled for LabelSet {
 }
 
 impl Bridged for Label {
+    fn group_ids() -> HashSet<TypeId> {
+        todo!()
+    }
     fn radt() -> (RADT, TypeRef) {
         let (_,utf8) = String::radt();
         let r = RADT {
@@ -711,6 +796,9 @@ impl Bridged for Label {
 // -> Result<Vec<T>, MonsterError> {
 
 impl Bridged for LabelSet {
+    fn group_ids() -> HashSet<TypeId> {
+        todo!()
+    }
     fn radt() -> (RADT, TypeRef) {
         let (_,utf8) = String::radt();
         let r = RADT {
@@ -880,6 +968,9 @@ mod tests {
 
 // use crate::func::{ };
 impl Bridged for crate::func::FunctionDefinition {
+    fn group_ids() -> HashSet<TypeId> {
+        todo!()
+    }
     fn radt() -> (RADT, TypeRef) {
         let (_,t_string) = String::radt();
         let (_,t_usize) = usize::radt();
