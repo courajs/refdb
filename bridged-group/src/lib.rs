@@ -288,7 +288,6 @@ enum Ty {
     Vec(Box<Ty>),
     Map(Box<(Ty, Ty)>),
     Hash(Expr),
-    // ? Tuple(Vec<Ty>),
     Ingroup(Ident),
     Other(Type),
 }
@@ -378,6 +377,19 @@ impl VisitMut for StripHashMacros {
                 let p = parse2::<Type>(hash).unwrap();
                 f.ty = p;
             }
+        } else {
+            visit_mut::visit_field_mut(self, f);
+        }
+    }
+    fn visit_generic_argument_mut(&mut self, g: &mut GenericArgument) {
+        if let GenericArgument::Type(Type::Macro(TypeMacro{mac: Macro{path,..}})) = g {
+            if to_simple_path(path) == "Hash" {
+                let hash = quote! { rf0::core::Hash };
+                let p = parse2::<Type>(hash).unwrap();
+                *g = GenericArgument::Type(p);
+            }
+        } else {
+            visit_mut::visit_generic_argument_mut(self, g);
         }
     }
 }

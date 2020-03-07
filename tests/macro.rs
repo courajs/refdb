@@ -289,6 +289,7 @@ mod t10 {
     bridged_group! {
         #![uniq(*b"1234567812345678")]
         struct Thing(Hash!(usize::radt().1));
+        struct Other(std::collections::BTreeMap<usize, Hash!(usize::radt().1)>);
     }
 
     #[test]
@@ -297,11 +298,34 @@ mod t10 {
         let r = RADT {
             uniqueness: *b"1234567812345678",
             items: vec![
+                // Thing
                 RADTItem::Product(vec![
+                    RADTItem::ExternalType(t_usize),
+                ]),
+                // Other
+                RADTItem::Product(vec![
+                    RADTItem::CycleRef(3),
+                ]),
+                // nil
+                RADTItem::Product(Vec::new()),
+                // map
+                RADTItem::Sum(vec![
+                    RADTItem::CycleRef(2),
+                    RADTItem::CycleRef(4),
+                ]),
+                // cons
+                RADTItem::Product(vec![
+                    RADTItem::CycleRef(5),
+                    RADTItem::CycleRef(3),
+                ]),
+                // entry
+                RADTItem::Product(vec![
+                    RADTItem::ExternalType(t_usize),
                     RADTItem::ExternalType(t_usize),
                 ]),
             ],
         };
         assert_eq!(<Thing as Bridged>::radt(), (r.clone(), r.item_ref(0)));
+        assert_eq!(<Other as Bridged>::radt(), (r.clone(), r.item_ref(1)));
     }
 }
