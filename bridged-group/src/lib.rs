@@ -181,38 +181,79 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
         }
     };
 
+    fn fields_as_product_fields(fields: &ItemFields) -> Vec<TwokenStream> {
+        match fields {
+            ItemFields::Unit => Vec::new(),
+            ItemFields::TupleLike(fields) => {
+                (0..fields.len()).map(|i| {
+                    let index = syn::Index::from(i);
+                    quote! { self.#index.serialize(&mut deps, &group) }
+                }).collect()
+            },
+            ItemFields::StructLike(fields) => {
+                fields.iter().map(|(name,_ty)| {
+                    quote! { self.#name.serialize(&mut deps, &group) }
+                }).collect()
+            },
+        }
+    }
+
     let impls = defs.into_iter().enumerate().map(|(index, def)| {
         let name = def.name();
         let uniq = uniq.clone();
         let items = radt_items.clone();
         let to_value = match def {
             Def::Struct(StructDef{fields,..}) => {
-                let field_values = match fields {
-                    ItemFields::Unit => Vec::new(),
-                    ItemFields::TupleLike(fields) => {
-                        (0..fields.len()).map(|i| {
-                            let index = syn::Index::from(i);
-                            quote! { self.#index.serialize(&mut deps, &group) }
-                        }).collect()
-                    },
-                    ItemFields::StructLike(fields) => {
-                        fields.iter().map(|(name,_ty)| {
-                            quote! { self.#name.serialize(&mut deps, &group) }
-                        }).collect()
-                    },
-                };
+                let field_values = fields_as_product_fields(&fields);
                 quote! {
                     let mut deps = Vec::new();
                     let group = Self::group_ids();
-                    let val = RADTValue::Product(vec![
+                    let val = rf0::types::RADTValue::Product(vec![
                         #(#field_values),*
                     ]);
                     let (_,typeref) = Self::radt();
                     (TypedValue { kind: typeref, value: val }, deps)
                 }
             },
-            Def::Enum(EnumDef{variants,..}) => {
-                quote!{panic!()}
+            Def::Enum(EnumDef{name, variants}) => {
+                let variants = variants.iter().enumerate().map(|(i, (var_name, fields))| {
+                    let i = i as u8;
+                    match fields {
+                        ItemFields::Unit => {
+                            quote!{
+                                #name::#var_name => rf0::types::RADTValue::Sum {
+                                    kind: #i,
+                                    value: Box::new(rf0::types::RADTValue::Product(Vec::new())),
+                                }
+                            }
+                        },
+                        ItemFields::TupleLike(fs) => {
+                            let idents = (0..fs.len()).map(|i|format_ident!("f{}", i));
+                            let serialized_fields = (0..fs.len()).map(|i| {
+                                let ident = format_ident!("f{}", i);
+                                quote!{ #ident.serialize(&mut deps, &group) }
+                            });
+                            quote!{
+                                #name::#var_name(#(#idents),*) => rf0::types::RADTValue::Sum {
+                                    kind: #i,
+                                    value: Box::new(rf0::types::RADTValue::Product(vec![
+                                        #(#serialized_fields),*
+                                    ])),
+                                }
+                            }
+                        },
+                        ItemFields::StructLike(_) => quote!{ _ => panic!() }
+                    }
+                });
+                quote!{
+                    let mut deps = Vec::new();
+                    let group = Self::group_ids();
+                    let val = match self {
+                        #(#variants),*
+                    };
+                    let (_,typeref) = Self::radt();
+                    (TypedValue { kind: typeref, value: val}, deps)
+                }
             },
         };
         quote! {

@@ -367,7 +367,7 @@ mod t12 {
             A,
             B(usize),
             C(BTreeMap<Other, usize>),
-            D { x: Third },
+            // D { x: Third },
         }
         #[derive(PartialEq, Eq, PartialOrd, Ord)]
         struct Other;
@@ -390,15 +390,26 @@ mod t12 {
 
         let val = TypedValue {
             kind: tr,
-            value: RADTValue::Sum {
+            value: RADTValue::Sum { // variant discrim
                 kind: 2,
                 value: Box::new(
-                    RADTValue::Sum { // map
-                        kind: 1,
-                        value: Box::new(
-                            RADTValue::Product(vec![RADTValue::Product(Vec::new()), RADTValue::Hash(num_hash)])
-                        )
-                    }
+                    RADTValue::Product(vec![ // contents of the variant
+                        RADTValue::Sum { // map
+                            kind: 1,
+                            value: Box::new(
+                                RADTValue::Product(vec![ // cons
+                                    RADTValue::Product(vec![ // head is an entry
+                                        RADTValue::Product(Vec::new()), // Other
+                                        RADTValue::Hash(num_hash), // usize
+                                    ]),
+                                    RADTValue::Sum { // tail is empty list
+                                        kind: 0,
+                                        value: Box::new(RADTValue::Product(Vec::new())),
+                                    },
+                                ])
+                            )
+                        }
+                    ])
                 )
             },
         };
