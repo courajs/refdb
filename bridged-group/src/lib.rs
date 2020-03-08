@@ -242,7 +242,19 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
                                 }
                             }
                         },
-                        ItemFields::StructLike(_) => quote!{ _ => panic!() }
+                        ItemFields::StructLike(fs) => {
+                            assert!(!fs.iter().any(|(id,_)|id == "deps" || id == "group"), "can't serialize a 'deps' or 'group' field");
+                            let bindings = fs.iter().map(|(id,_)|id);
+                            let fields = fs.iter().map(|(id,_)| quote!{ #id.serialize(&mut deps, &group) });
+                            quote! {
+                                #name::#var_name{#(#bindings),*} => rf0::types::RADTValue::Sum {
+                                    kind: #i,
+                                    value: Box::new(rf0::types::RADTValue::Product(vec![
+                                        #(#fields),*
+                                    ])),
+                                }
+                            }
+                        },
                     }
                 });
                 quote!{

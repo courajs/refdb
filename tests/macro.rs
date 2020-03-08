@@ -367,17 +367,53 @@ mod t12 {
             A,
             B(usize),
             C(BTreeMap<Other, usize>),
-            // D { x: Third },
+            D { x: usize },
         }
         #[derive(PartialEq, Eq, PartialOrd, Ord)]
         struct Other;
-        struct Third {
-            yes: String,
-        }
     }
 
     #[test]
-    fn enum_to_value() {
+    fn struct_variant_to_value() {
+        let (r, tr) = Thing::radt();
+        let (_, t_usize) = usize::radt();
+
+        let input = Thing::D { x: 12 };
+
+        let (num, mut deps) = (12usize).to_value();
+        let num_hash = num.typing().hash();
+        deps.push(Item::Value(num));
+
+        let val = TypedValue {
+            kind: tr,
+            value: RADTValue::Sum {
+                kind: 3,
+                value: Box::new(
+                    RADTValue::Product(vec![
+                        RADTValue::Hash(num_hash),
+                    ])
+                ),
+            },
+        };
+
+        assert_eq!(input.to_value(), (val, deps));
+    }
+
+    #[test]
+    fn unit_variant_to_value() {
+        let (r, tr) = Thing::radt();
+        let val = TypedValue {
+            kind: tr,
+            value: RADTValue::Sum {
+                kind: 0,
+                value: Box::new(RADTValue::Product(Vec::new())),
+            },
+        };
+        assert_eq!(Thing::A.to_value(), (val, Vec::new()));
+    }
+
+    #[test]
+    fn tuple_variant_to_value() {
         let (r,tr) = Thing::radt();
         let other = r.item_ref(1);
         let (num, mut deps) = (12usize).to_value();
