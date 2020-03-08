@@ -19,6 +19,48 @@ pub trait Bridged: Sized + 'static {
     fn group_ids() -> HashSet<TypeId>;
 }
 
+pub trait DeserializeFromRADTValue: Sized {
+    fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError>;
+}
+impl DeserializeFromRADTValue for Hash {
+    fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
+        match val {
+            RADTValue::Hash(h) => Ok(*h),
+            _ => Err(MonsterError::Todo("mismatch deserializing hash"))
+        }
+    }
+}
+impl<T> DeserializeFromRADTValue for Box<T> where T: DeserializeFromRADTValue {
+    fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
+        Ok(Box::new(T::deserialize(val, deps)?))
+    }
+}
+impl<T> DeserializeFromRADTValue for Vec<T> where T: DeserializeFromRADTValue {
+    fn deserialize(mut val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
+        let mut result = Vec::new();
+        while let RADTValue::Sum { kind: 1, value } = val {
+            match value.deref() {
+                RADTValue::Product(fields) if fields.len() == 2 => {
+                    result.push(T::deserialize(&fields[0], deps)?);
+                    val = &fields[1];
+                },
+                _ => return Err(MonsterError::Todo("mismatch deserializing vec cons"))
+            }
+        }
+        match val {
+            RADTValue::Sum { kind: 0, value } if **value == RADTValue::Product(Vec::new()) => {
+                Ok(result)
+            },
+            _ => Err(MonsterError::Todo("mismatch deserializing vec nil"))
+        }
+    }
+}
+impl<K,V> DeserializeFromRADTValue for BTreeMap<K,V> where K: DeserializeFromRADTValue, V: DeserializeFromRADTValue {
+    fn deserialize(mut val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
+        todo!("map deser")
+    }
+}
+
 pub trait SerializeToRADTValue {
     fn serialize(&self, deps: &mut Vec<Item>, group: &HashSet<TypeId>) -> RADTValue;
 }
@@ -40,11 +82,6 @@ impl<T> SerializeToRADTValue for T where T: Bridged {
         }
     }
 }
-// impl<T> SerializeToRADTValue for Box<T> {
-//     fn serialize(&self, deps: &mut Vec<Item>) -> RADTValue {
-//         self.deref().serialize(deps)
-//     }
-// }
 impl<T> SerializeToRADTValue for Vec<T> where T: SerializeToRADTValue {
     fn serialize(&self, deps: &mut Vec<Item>, group: &HashSet<TypeId>) -> RADTValue {
         let empty = RADTValue::Sum{kind:0, value: Box::new(RADTValue::Product(Vec::new()))};

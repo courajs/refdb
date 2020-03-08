@@ -15,6 +15,35 @@ use proc_macro2::TokenStream as TwokenStream;
 use pretty_sure::sure;
 use indexmap::IndexSet;
 
+// impl Deser for usize {
+//     fn from_thing(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Self {
+//         if let RADTValue::Hash(h) = val {
+//             // get val from deps and recurse
+//         }
+//         if let RADTValue::Product(fields) = val {
+//             // assert fields.len() == 1
+//             let h = sure!(fields[0], RADTValue::Hash(h) => h);
+//             let bytes = sure!(deps.get(h).expect(""), Item::Blob(Blob{bytes}) => bytes);
+//             usize::from_be_bytes(bytes);
+//         }
+//     }
+// }
+// impl Deser for TypeRef {
+//     fn from_thing(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Self {
+//         if let RADTValue::Hash(h) = val {
+//             // get val from deps and recurse
+//         }
+//         // assert it's a product of the right length
+//         if let RADTValue::Product(fields) = val {
+//             // assert fields.len() == 2
+//             return TypeRef {
+//                 definition: <Hash as Deser>::from_thing(&fields[0], deps),
+//                 item: <usize as Deser>::from_thing(&fields[1], deps),
+//             }
+//         }
+//     }
+// }
+// 
 #[proc_macro]
 pub fn bridged_group(ts: TokenStream) -> TokenStream {
     let t: File = parse(ts).expect("b");
