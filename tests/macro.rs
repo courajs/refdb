@@ -504,18 +504,60 @@ mod t13 {
         let t = Thing::deserialize(&val, &HashMap::new());
     }
 
-    // bridged_group! {
-    //     #![uniq(*b"9999999999999999")]
-    //     struct One {
-    //         a: Thing,
-    //         b: Two,
-    //     }
-    //     enum Two {
-    //         A(Thing),
-    //         B { val: Box<One> },
-    //     }
-    // }
+    bridged_group! {
+        #![uniq(*b"9999999999999999")]
+        struct One {
+            a: Thing,
+            b: Two,
+        }
+        enum Two {
+            A(Thing),
+            B { val: Box<One> },
+        }
+    }
 
-    // fn referential_deserialize {
-    // }
+    #[test]
+    fn referential_deserialize() {
+        let expected = One {
+            a: Thing,
+            b: Two::B {
+                val: Box::new(One {
+                    a: Thing,
+                    b: Two::A(Thing),
+                })
+            }
+        };
+        let (_,t_thing) = Thing::radt();
+        let thing = TypedValue {
+            kind: t_thing,
+            value: RADTValue::Product(Vec::new()),
+        };
+        let thing_hash = thing.typing().hash();
+
+        let mut deps = HashMap::new();
+        deps.insert(thing_hash, Item::Value(thing));
+
+        let (_,t_one) = One::radt();
+
+        let input = TypedValue {
+            kind: t_one,
+            value: RADTValue::Product(vec![
+                RADTValue::Hash(thing_hash), // a: Thing
+                RADTValue::Sum {  // b: Two::B
+                    kind: 1,
+                    value: Box::new(RADTValue::Product(vec![
+                        RADTValue::Product(vec![  // val: Box::new(One
+                            RADTValue::Hash(thing_hash), // a: Thing
+                            RADTValue::Sum { // b: Two::A
+                                kind: 0,
+                                value: Box::new(RADTValue::Product(vec![RADTValue::Hash(thing_hash)])) // Two::A(Thing)
+                            },
+                        ]),
+                    ])),
+                }
+            ]),
+        };
+
+        One::from_value(&input, &deps).unwrap();
+    }
 }
