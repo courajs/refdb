@@ -61,6 +61,12 @@ impl<K,V> DeserializeFromRADTValue for BTreeMap<K,V> where K: DeserializeFromRAD
     }
 }
 
+impl DeserializeFromRADTValue for usize {
+    fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
+        todo!("usize deser")
+    }
+}
+
 pub trait SerializeToRADTValue {
     fn serialize(&self, deps: &mut Vec<Item>, group: &HashSet<TypeId>) -> RADTValue;
 }

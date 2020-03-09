@@ -1,6 +1,7 @@
 #![allow(unused_mut, dead_code, unused_variables, unused_imports)]
 
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use rf0::types::*;
 use rf0::core::*;
@@ -453,4 +454,68 @@ mod t12 {
         assert_eq!(out_deps, deps);
         assert_eq!(v, val);
     }
+
+    bridged_group! {
+        #![uniq(*b"9999999999999999")]
+        struct Refer {
+            x: usize,
+            y: Other,
+        }
+    }
+
+    #[test]
+    fn external_split() {
+        let (r,tr) = Refer::radt();
+
+        let input = Refer { x: 12, y: Other };
+
+        let (num, mut deps) = (12usize).to_value();
+        let num_hash = num.typing().hash();
+        deps.push(Item::Value(num));
+
+        let (_,t_other) = Other::radt();
+        let other = TypedValue{kind: t_other, value: RADTValue::Product(Vec::new())};
+        let other_hash = other.typing().hash();
+        deps.push(Item::Value(other));
+
+        let expected = TypedValue {
+            kind: tr,
+            value: RADTValue::Product(vec![
+                      RADTValue::Hash(num_hash),
+                      RADTValue::Hash(other_hash),
+            ])
+        };
+
+        assert_eq!(input.to_value(), (expected, deps))
+    }
+}
+
+mod t13 {
+    use super::*;
+
+    bridged_group! {
+        #![uniq(*b"1234567812345678")]
+        struct Thing;
+    }
+
+    #[test]
+    fn hello_deserialize() {
+        let val = RADTValue::Product(Vec::new());
+        let t = Thing::deserialize(&val, &HashMap::new());
+    }
+
+    // bridged_group! {
+    //     #![uniq(*b"9999999999999999")]
+    //     struct One {
+    //         a: Thing,
+    //         b: Two,
+    //     }
+    //     enum Two {
+    //         A(Thing),
+    //         B { val: Box<One> },
+    //     }
+    // }
+
+    // fn referential_deserialize {
+    // }
 }

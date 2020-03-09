@@ -28,22 +28,7 @@ use indexmap::IndexSet;
 //         }
 //     }
 // }
-// impl Deser for TypeRef {
-//     fn from_thing(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Self {
-//         if let RADTValue::Hash(h) = val {
-//             // get val from deps and recurse
-//         }
-//         // assert it's a product of the right length
-//         if let RADTValue::Product(fields) = val {
-//             // assert fields.len() == 2
-//             return TypeRef {
-//                 definition: <Hash as Deser>::from_thing(&fields[0], deps),
-//                 item: <usize as Deser>::from_thing(&fields[1], deps),
-//             }
-//         }
-//     }
-// }
-// 
+
 #[proc_macro]
 pub fn bridged_group(ts: TokenStream) -> TokenStream {
     let t: File = parse(ts).expect("b");
@@ -231,6 +216,116 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
         let name = def.name();
         let uniq = uniq.clone();
         let items = radt_items.clone();
+        let from_value = match &def {
+            Def::Struct(StructDef{name,fields}) => {
+                let fields_len = fields.len();
+                let fields_def = match fields {
+                    ItemFields::Unit => quote!{},
+                    ItemFields::TupleLike(fs) => {
+                        let things = fs.iter().enumerate().map(|(i,ty)| {
+                            let type_stream = ty.type_token_stream();
+                            quote!{ <#type_stream as DeserializeFromRADTValue>::deserialize(&fields[#i], deps)? }
+                        });
+                        quote!{ (#(#things),*) }
+                    },
+                    ItemFields::StructLike(fs) => {
+                        let things = fs.iter().enumerate().map(|(i, (field_name, ty))| {
+                            let type_stream = ty.type_token_stream();
+                            quote!{ #field_name: <#type_stream as DeserializeFromRADTValue>::deserialize(&fields[#i], deps)? }
+                        });
+                        quote!{ {#(#things),*}}
+                    },
+                };
+                quote! {
+                    impl rf0::bridge::DeserializeFromRADTValue for #name {
+                        fn deserialize(val: &rf0::types::RADTValue, deps: &std::collections::HashMap<rf0::core::Hash,rf0::storage::Item>) -> Result<Self, rf0::error::MonsterError> {
+                            use rf0::error::MonsterError;
+                            use rf0::bridge::Bridged;
+                            use rf0::bridge::DeserializeFromRADTValue;
+                            use rf0::storage::Item;
+                            use rf0::types::RADTValue;
+                            use rf0::types::TypedValue;
+                            match val {
+                                RADTValue::Hash(h) => {
+                                    let (_,tr) = <Self as Bridged>::radt();
+                                    match deps.get(h) {
+                                        Some(Item::Value(TypedValue{kind:tr, value})) => {
+                                            <Self as DeserializeFromRADTValue>::deserialize(value, deps)
+                                        },
+                                        Some(_) => Err(MonsterError::Todo("mismatched types in specific deser")),
+                                        None => Err(MonsterError::Todo("missing dep in deser"))
+                                    }
+                                },
+                                RADTValue::Product(fields) if fields.len() == #fields_len => {
+                                    Ok(#name #fields_def)
+                                },
+                                _ => Err(MonsterError::Todo("bad value for deser"))
+                            }
+                        }
+                    }
+                }
+            },
+            Def::Enum(EnumDef{name,variants}) => {
+                let variant_branches = variants.iter().enumerate().map(|(i,(var_name,fields))|{
+                    let i = i as u8;
+                    let fields_len = fields.len();
+                    let fields_def = match fields {
+                        ItemFields::Unit => quote!{},
+                        ItemFields::TupleLike(fs) => {
+                            let things = fs.iter().enumerate().map(|(i,ty)| {
+                                let type_stream = ty.type_token_stream();
+                                quote!{ <#type_stream as DeserializeFromRADTValue>::deserialize(&fields[#i], deps)? }
+                            });
+                            quote!{ (#(#things),*) }
+                        },
+                        ItemFields::StructLike(fs) => {
+                            let things = fs.iter().enumerate().map(|(i, (field_name, ty))| {
+                                let type_stream = ty.type_token_stream();
+                                quote!{ #field_name: <#type_stream as DeserializeFromRADTValue>::deserialize(&fields[#i], deps)? }
+                            });
+                            quote!{ {#(#things),*}}
+                        },
+                    };
+                    quote!{
+                        RADTValue::Sum {kind: #i, value} => {
+                            match value.deref() {
+                                RADTValue::Product(fields) if fields.len() == #fields_len => {
+                                    Ok(#name::#var_name #fields_def)
+                                },
+                                _ => Err(MonsterError::Todo("deser enum num fields mismatch"))
+                            }
+                        }
+                    }
+                });
+                quote! {
+                    impl rf0::bridge::DeserializeFromRADTValue for #name {
+                        fn deserialize(val: &rf0::types::RADTValue, deps: &std::collections::HashMap<Hash,Item>) -> Result<Self, rf0::error::MonsterError> {
+                            use std::ops::Deref;
+                            use rf0::error::MonsterError;
+                            use rf0::bridge::Bridged;
+                            use rf0::bridge::DeserializeFromRADTValue;
+                            use rf0::storage::Item;
+                            use rf0::types::RADTValue;
+                            use rf0::types::TypedValue;
+                            match val {
+                                RADTValue::Hash(h) => {
+                                    let (_,tr) = <Self as Bridged>::radt();
+                                    match deps.get(h) {
+                                        Some(Item::Value(TypedValue{kind:tr, value})) => {
+                                            <Self as DeserializeFromRADTValue>::deserialize(value, deps)
+                                        },
+                                        Some(_) => Err(MonsterError::Todo("mismatched types in specific deser")),
+                                        None => Err(MonsterError::Todo("missing dep in deser"))
+                                    }
+                                },
+                                #(#variant_branches),*
+                                _ => Err(MonsterError::Todo("bad value for deser"))
+                            }
+                        }
+                    }
+                }
+            }
+        };
         let to_value = match def {
             Def::Struct(StructDef{fields,..}) => {
                 let field_values = fields_as_product_fields(&fields);
@@ -298,6 +393,7 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
             },
         };
         quote! {
+            #from_value
             impl rf0::bridge::Bridged for #name {
                 fn group_ids() -> std::collections::HashSet<std::any::TypeId> {
                     #type_ids
@@ -317,7 +413,17 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
                     #to_value
                 }
                 fn from_value(v: &rf0::types::TypedValue, deps: &std::collections::HashMap<rf0::core::Hash, rf0::storage::Item>) -> Result<Self, rf0::error::MonsterError> {
-                    todo!()
+                    use rf0::types::TypedValue;
+                    use rf0::bridge::Bridged;
+                    use rf0::bridge::DeserializeFromRADTValue;
+                    use rf0::error::MonsterError;
+                    let (_,tr) = <Self as Bridged>::radt();
+                    match v {
+                        TypedValue {kind:tr, value} => {
+                            <Self as DeserializeFromRADTValue>::deserialize(value, deps)
+                        },
+                        _ => Err(MonsterError::Todo("ahh wrong type to from_value"))
+                    }
                 }
             }
         }
@@ -418,6 +524,35 @@ enum Ty {
     Ingroup(Ident),
     Other(Type),
 }
+impl Ty {
+    fn type_token_stream(&self) -> TwokenStream {
+        match self {
+            Ty::Box(inner) => {
+                let inner_stream = inner.type_token_stream();
+                quote! { Box<#inner_stream> }
+            },
+            Ty::Vec(inner) => {
+                let inner_stream = inner.type_token_stream();
+                quote! { Vec<#inner_stream> }
+            },
+            Ty::Map(inner) => {
+                let (k,v) = inner.deref();
+                let key = k.type_token_stream();
+                let val = v.type_token_stream();
+                quote! { std::collections::BTreeMap<#key, #val> }
+            },
+            Ty::Hash(_) => {
+                quote! { rf0::core::Hash }
+            },
+            Ty::Ingroup(id) => {
+                quote!{#id}
+            },
+            Ty::Other(inner) => {
+                quote!{#inner}
+            },
+        }
+    }
+}
 
 impl ItemFields {
     fn types(&self) -> Vec<Ty> {
@@ -427,6 +562,13 @@ impl ItemFields {
             ItemFields::StructLike(fs) => {
                 fs.iter().map(|(_,ty)|ty).cloned().collect()
             }
+        }
+    }
+    fn len(&self) -> usize {
+        match self {
+            ItemFields::Unit => 0,
+            ItemFields::TupleLike(fs) => fs.len(),
+            ItemFields::StructLike(fs) => fs.len(),
         }
     }
 }
