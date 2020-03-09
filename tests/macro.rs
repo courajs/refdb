@@ -561,3 +561,57 @@ mod t13 {
         One::from_value(&input, &deps).unwrap();
     }
 }
+
+mod t14 {
+    use super::*;
+
+    bridged_group!{
+        #![uniq(*b"1111222233334444")]
+        #[derive(Debug, Clone, PartialEq)]
+        struct Thing(usize);
+    }
+
+    #[test]
+    fn deserialize_usize() {
+        let (_,t_usize) = usize::radt();
+        let blob = Item::Blob(Blob{bytes:(12usize).to_be_bytes().to_vec()});
+        let blob_hash = blob.hash();
+
+        let mut deps = HashMap::new();
+        deps.insert(blob_hash, blob);
+
+        let input = TypedValue {
+            kind: t_usize,
+            value: RADTValue::Hash(blob_hash),
+        };
+        
+        assert_eq!(usize::from_value(&input, &deps).unwrap(), 12usize);
+    }
+
+    #[test]
+    fn deserialize_contained_usize() {
+        let expected = Thing(12);
+
+        let mut deps = HashMap::new();
+
+        let (_,t_usize) = usize::radt();
+        let blob = Item::Blob(Blob{bytes:(12usize).to_be_bytes().to_vec()});
+        let blob_hash = blob.hash();
+        deps.insert(blob_hash, blob);
+
+        let u_size = Item::Value(TypedValue {
+            kind: t_usize,
+            value: RADTValue::Hash(blob_hash),
+        });
+        let usize_hash = u_size.hash();
+        deps.insert(usize_hash, u_size);
+
+        let (_,t_thing) = Thing::radt();
+        let input = TypedValue{
+            kind: t_thing,
+            value: RADTValue::Product(vec![RADTValue::Hash(usize_hash)]),
+        };
+        
+        assert_eq!(Thing::from_value(&input, &deps).unwrap(), expected);
+    }
+}

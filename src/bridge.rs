@@ -63,7 +63,19 @@ impl<K,V> DeserializeFromRADTValue for BTreeMap<K,V> where K: DeserializeFromRAD
 
 impl DeserializeFromRADTValue for usize {
     fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
-        todo!("usize deser")
+        let (_,t_usize) = Self::radt();
+        use std::convert::TryInto;
+        let body_hash = sure!(val, RADTValue::Hash(h) => h; return Err(MonsterError::BridgedMistypedDependency));
+        let bytes = match deps.get(&body_hash) {
+            Some(Item::Value(TypedValue{kind:t_usize, value})) => return usize::deserialize(value, deps),
+            Some(Item::Blob(Blob{bytes})) => &bytes[..],
+            None => return Err(MonsterError::BridgedMissingDependency("a usize's bytes")),
+            _ => return Err(MonsterError::BridgedMistypedDependency),
+        };
+        match bytes.try_into() {
+            Ok(ary) => Ok(usize::from_be_bytes(ary)),
+            _ => Err(MonsterError::Todo("Only 64-bit numbers can be decoded"))
+        }
     }
 }
 
@@ -483,16 +495,7 @@ impl Bridged for usize {
             return Err(MonsterError::BridgedMistypedDependency)
         }
         validate_radt_instance(&rad, t.item, &v.value)?;
-        let body = sure!(v.value, RADTValue::Hash(h) => h; return Err(MonsterError::BridgedMistypedDependency));
-        let bytes = match deps.get(&body) {
-            Some(Item::Blob(b)) => b.bytes.clone(),
-            None => return Err(MonsterError::BridgedMissingDependency("a usize's bytes")),
-            _ => return Err(MonsterError::BridgedMistypedDependency),
-        };
-        assert!(bytes.len() == 8, "Only 64-bit numbers can be decoded");
-        let mut b = [0;8];
-        b.copy_from_slice(&bytes);
-        Ok(usize::from_be_bytes(b))
+        usize::deserialize(&v.value, deps)
     }
 }
 
