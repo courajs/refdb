@@ -11,6 +11,7 @@ use nom::{
     switch, IResult,
 };
 
+use bridged_group::bridged_group;
 use crate::core::*;
 use crate::error::MonsterError;
 use crate::storage::Storable;
@@ -62,11 +63,14 @@ impl TypedValue {
         }
     }
 }
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
-pub struct TypeRef {
-    pub definition: Hash,
-    pub item: usize,
+use crate as rf0;
+bridged_group! {
+    #![uniq(*b"core:TypeRef----")]
+    #[derive(Debug, PartialEq, Eq, Clone, Copy, Hash)]
+    pub struct TypeRef {
+        pub definition: Hash!(RADT_TYPE_REF),
+        pub item: usize,
+    }
 }
 impl TypeRef {
     pub fn value(&self, val: RADTValue) -> TypedValue {

@@ -15,19 +15,6 @@ use proc_macro2::TokenStream as TwokenStream;
 use pretty_sure::sure;
 use indexmap::IndexSet;
 
-// impl Deser for usize {
-//     fn from_thing(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Self {
-//         if let RADTValue::Hash(h) = val {
-//             // get val from deps and recurse
-//         }
-//         if let RADTValue::Product(fields) = val {
-//             // assert fields.len() == 1
-//             let h = sure!(fields[0], RADTValue::Hash(h) => h);
-//             let bytes = sure!(deps.get(h).expect(""), Item::Blob(Blob{bytes}) => bytes);
-//             usize::from_be_bytes(bytes);
-//         }
-//     }
-// }
 
 #[proc_macro]
 pub fn bridged_group(ts: TokenStream) -> TokenStream {
@@ -619,6 +606,7 @@ fn interpret_type(ty: &Type, in_group: &[Ident]) -> Ty {
         match to_simple_path(path).deref() {
             "Box" => return Ty::Box(Box::new(get_main_generic_args(path, in_group)[0].clone())),
             "Vec" => return Ty::Vec(Box::new(get_main_generic_args(path, in_group)[0].clone())),
+            "Hash" | "core::Hash" | "rf0::core::Hash" | "crate::core::Hash" => panic!("Use the Hash!(*TypeRef expression*) macro form to annotate Hash types"),
             "BTreeMap" | "collections::BTreeMap" | "std::collections::BTreeMap" => {
                 let args = get_main_generic_args(path, in_group);
                 return Ty::Map(Box::new((args[0].clone(), args[1].clone())));

@@ -183,64 +183,6 @@ impl Bridged for String {
     }
 }
 
-impl Bridged for TypeRef {
-    fn group_ids() -> HashSet<TypeId> {
-        todo!()
-    }
-    fn radt() -> (RADT, TypeRef) {
-        let (_, u_size) = usize::radt();
-        let t = RADT {
-            uniqueness: b"core:TypeRef----".to_owned(),
-            items: vec![
-                RADTItem::Product(vec![
-                    RADTItem::ExternalType(RADT_TYPE_REF),
-                    RADTItem::ExternalType(u_size),
-                ]),
-            ],
-        };
-        let typing = Typing {
-            kind: RADT_TYPE_REF,
-            data: t.hash(),
-        };
-        (t, TypeRef { definition: typing.hash(), item: 0 })
-    }
-    fn to_value(&self) -> (TypedValue, Vec<Item>) {
-        let (item, mut deps) = self.item.to_value();
-        let item_hash = typing_from_typed_val(&item).hash();
-
-        let (rad, t) = Self::radt();
-        let val = RADTValue::Product(vec![
-                    RADTValue::Hash(self.definition),
-                    RADTValue::Hash(item_hash),
-        ]);
-
-        debug_assert!(validate_radt_instance(&rad, t.item, &val).is_ok());
-
-        let typed = TypedValue { kind: t, value: val };
-        deps.push(Item::Value(item));
-
-        (typed, deps)
-    }
-    fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
-        let (rad, t) = Self::radt();
-        if t != v.kind {
-            return Err(MonsterError::BridgedMistypedDependency)
-        }
-        validate_radt_instance(&rad, t.item, &v.value)?;
-        let fields = sure!(&v.value, RADTValue::Product(f) => f; return Err(MonsterError::BridgedMistypedDependency));
-        let definition = sure!(fields[0], RADTValue::Hash(h) => h; return Err(MonsterError::BridgedMistypedDependency));
-        let item_hash = sure!(fields[1], RADTValue::Hash(h) => h; return Err(MonsterError::BridgedMistypedDependency));
-        let u_size = match deps.get(&item_hash) {
-            Some(Item::Value(u_size)) => u_size,
-            None => return Err(MonsterError::BridgedMissingDependency("typeref item number")),
-            _ => return Err(MonsterError::BridgedMistypedDependency),
-        };
-
-        let item = usize::from_value(&u_size, deps)?;
-
-        Ok(TypeRef { definition, item })
-    }
-}
 
 impl Bridged for RADT {
     fn group_ids() -> HashSet<TypeId> {
@@ -911,6 +853,14 @@ impl Bridged for LabelSet {
 mod tests {
     use super::*;
 
+    fn test_roundtrip<T: Bridged + Eq + std::fmt::Debug>(input: T) {
+        let _ = T::radt();
+        let (val, mut deps) = input.to_value();
+        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
+        let result = T::from_value(&val, &env).unwrap();
+        assert_eq!(input, result);
+    }
+
     #[test]
     fn test_str_roundtrip() {
         test_roundtrip(String::from("hello"));
@@ -961,14 +911,6 @@ mod tests {
                     ]),
                 },
         ]));
-    }
-
-    fn test_roundtrip<T: Bridged + Eq + std::fmt::Debug>(input: T) {
-        let _ = T::radt();
-        let (val, mut deps) = input.to_value();
-        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
-        let result = T::from_value(&val, &env).unwrap();
-        assert_eq!(input, result);
     }
 
     #[test]

@@ -17,6 +17,7 @@ indoc = "0.3"
 lazy_static = "1.4"
 unicode-segmentation = "1.3.0"
 rhai = { path = "rhai" } # "0.9"
+bridged-group = { path = "./bridged-group" }
 
 [dev-dependencies]
 bridged-group = { path = "./bridged-group" }
