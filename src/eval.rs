@@ -1,5 +1,8 @@
 use std::collections::HashSet;
 use std::collections::HashMap;
+use std::collections::BTreeMap;
+
+use bridged_group::*;
 
 use crate::lang::AST;
 use crate::error::*;
@@ -319,12 +322,16 @@ fn find_specifier<O, Z: PartialEq + ?Sized, K: std::borrow::Borrow<Z>>(spec: &Z,
 }
 
 
-#[derive(Debug, PartialEq, Eq)]
-pub struct Env {
-    // type -> labeling
-    pub labelings: HashMap<Hash, LabelSet>,
-    // name -> typed value
-    pub variables: HashMap<String, Hash>,
+use crate as rf0;
+bridged_group! {
+    #![uniq(*b"core:Env--------")]
+    #[derive(Debug, PartialEq, Eq)]
+    pub struct Env {
+        // type -> labeling
+        pub labelings: BTreeMap<Hash!(RADT::radt().1), LabelSet>,
+        // name -> typed value
+        pub variables: BTreeMap<String, Hash!(ANY_TYPE_REF)>,
+    }
 }
 
 use std::ops::Deref;

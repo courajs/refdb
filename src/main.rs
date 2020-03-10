@@ -2,6 +2,7 @@
 
 use std::path::Path;
 use std::collections::HashMap;
+use std::collections::BTreeMap;
 use std::collections::HashSet;
 
 use failure::Error;
@@ -63,8 +64,8 @@ fn run_app() -> Result<(), Error> {
 
         let mut env = db.get_default_env()?.unwrap_or_else(||
             Env {
-                labelings: HashMap::new(),
-                variables: HashMap::new(),
+                labelings: BTreeMap::new(),
+                variables: BTreeMap::new(),
             }
         );
         env.labelings.insert(Item::TypeDef(string_rad).hash(), LabelSet(vec![

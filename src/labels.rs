@@ -6,22 +6,29 @@ use std::{
 use hex_literal::hex;
 use indoc::indoc as dedent;
 
+use bridged_group::*;
+
 use crate::core::*;
 use crate::error::*;
 use crate::types::*;
 
-#[derive(Debug,PartialEq,Eq)]
-pub struct LabelSet(pub Vec<Label>);
-#[derive(Debug,PartialEq,Eq)]
-pub struct Label {
-    pub name: String,
-    pub item: LabeledItem,
-}
-#[derive(Debug,PartialEq,Eq)]
-pub enum LabeledItem {
-    Product(Vec<Label>),
-    Sum(Vec<Label>),
-    Type,
+
+use crate as rf0;
+bridged_group! {
+    #![uniq(*b"core:TypeLabel--")]
+    #[derive(Debug,PartialEq,Eq)]
+    pub struct LabelSet(pub Vec<Label>);
+    #[derive(Debug,PartialEq,Eq)]
+    pub struct Label {
+        pub name: String,
+        pub item: LabeledItem,
+    }
+    #[derive(Debug,PartialEq,Eq)]
+    pub enum LabeledItem {
+        Product(Vec<Label>),
+        Sum(Vec<Label>),
+        Type,
+    }
 }
 
 impl Display for LabelSet {
