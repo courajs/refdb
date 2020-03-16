@@ -230,11 +230,12 @@ impl<'a> Db<'a> {
             return Ok(None);
         }
         let hash = h.unwrap();
+        println!("got hash");
         self.get_env(hash)
     }
 
     pub fn get_env(&self, h: Hash) -> Result<Option<Env>, MonsterError> {
-
+        println!("1");
         fn string_hashes_for_label(v: &RADTValue, string_hashes: &mut Vec<Hash>) {
             let fields = sure!(v, RADTValue::Product(fields) => fields);
             string_hashes.push(sure!(&fields[0], RADTValue::Hash(h) => *h));
@@ -251,6 +252,7 @@ impl<'a> Db<'a> {
             }
         }
 
+        println!("2");
         let stored = self.get(h)?;
         let typed = sure!(stored, Item::Value(v) => v; return Err(MonsterError::Todo("env wasn't a value")));
         let (rad, env_typeref) = Env::radt();
@@ -258,12 +260,14 @@ impl<'a> Db<'a> {
             return Err(MonsterError::Todo("Tried to get_env a non-env"));
         }
 
+        println!("3");
         let mut deps: HashMap<Hash, Item> = HashMap::new();
         // already verified as it was constructed from bytes by .get()
 
         let both = sure!(&typed.value, RADTValue::Product(v) => v);
         let [mut labels, mut vars] = sure!(&both[..], [a,b]);
 
+        println!("4");
         let mut labelset_hashes = Vec::<Hash>::new();
         while let RADTValue::Sum{kind:1, value} = labels {
             let cons = sure!(value.deref(), RADTValue::Product(v) => v);
@@ -274,6 +278,7 @@ impl<'a> Db<'a> {
             labelset_hashes.push(label_hash);
         }
 
+        println!("5");
 
         let mut string_hashes = Vec::<Hash>::new();
         for h in labelset_hashes {
@@ -288,6 +293,7 @@ impl<'a> Db<'a> {
             deps.insert(h, labelset);
         }
 
+        println!("6");
         while let RADTValue::Sum{kind:1, value} = vars {
             let cons = sure!(value.deref(), RADTValue::Product(v) => v);
             vars = &cons[1];
@@ -297,6 +303,7 @@ impl<'a> Db<'a> {
             string_hashes.push(name_hash);
         }
 
+        println!("7");
         let mut string_body_hashes = Vec::new();
         for h in string_hashes {
             let s = self.get(h)?;
@@ -304,12 +311,17 @@ impl<'a> Db<'a> {
             deps.insert(h, s);
         }
 
+        println!("8");
         for h in string_body_hashes {
             let body = self.get(h)?;
             deps.insert(h, body);
         }
 
-        Env::from_value(&typed, &deps).map(|e| Some(e))
+        println!("9");
+        dbg!(&typed, deps.keys().collect::<Vec<_>>());
+        let e = Env::from_value(&typed, &deps).map(|e| Some(e));
+        println!("10");
+        e
     }
 
     pub fn get_default_env_hash(&self) -> Result<Option<Hash>, MonsterError> {
@@ -330,27 +342,8 @@ impl<'a> Db<'a> {
     }
 
     pub fn get_string(&self, hash: Hash) -> Result<String, MonsterError> {
-        use std::collections::HashMap;
-        use crate::bridge::Bridged;
-        let s = self.get(hash)?;
-        match s {
-            Item::Value(val) => {
-                let (_, t) = String::radt();
-                if val.kind != t {
-                    return Err(MonsterError::Todo("not a string"));
-                }
-                match val.value {
-                    RADTValue::Hash(h) => {
-                        let b = self.get(h)?;
-                        let mut deps = HashMap::new();
-                        deps.insert(h, b);
-                        String::from_value(&val, &deps)
-                    },
-                    _ => return Err(MonsterError::Todo("not a string 2"))
-                }
-            },
-            _ => return Err(MonsterError::Todo("not a string"))
-        }
+        use crate::bridge::FetchStrategy;
+        String::hydrate(hash, self)
     }
 
     pub fn get(&self, hash: Hash) -> Result<Item, MonsterError> {

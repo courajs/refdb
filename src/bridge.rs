@@ -19,6 +19,10 @@ pub trait Bridged: Sized + 'static {
     fn group_ids() -> HashSet<TypeId>;
 }
 
+pub trait FetchStrategy: Sized {
+    fn hydrate(self_hash: Hash, db: &Db) -> Result<Self, MonsterError>;
+}
+
 pub trait DeserializeFromRADTValue: Sized {
     fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError>;
 }
@@ -55,9 +59,32 @@ impl<T> DeserializeFromRADTValue for Vec<T> where T: DeserializeFromRADTValue {
         }
     }
 }
-impl<K,V> DeserializeFromRADTValue for BTreeMap<K,V> where K: DeserializeFromRADTValue, V: DeserializeFromRADTValue {
+impl<K,V> DeserializeFromRADTValue for BTreeMap<K,V> where K: DeserializeFromRADTValue + Ord, V: DeserializeFromRADTValue {
     fn deserialize(mut val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
-        todo!("map deser")
+        let mut result = Self::new();
+        while let RADTValue::Sum { kind: 1, value } = val {
+            match value.deref() {
+                RADTValue::Product(fields) if fields.len() == 2 => { // entry list cons
+                    match &fields[0] {
+                        RADTValue::Product(fields) if fields.len() == 2 => { // key/val entry
+                            result.insert(
+                                K::deserialize(&fields[0], deps)?,
+                                V::deserialize(&fields[1], deps)?,
+                            );
+                        },
+                        _ => return Err(MonsterError::Todo("mismatch deserializing map entry"))
+                    }
+                    val = &fields[1];
+                },
+                _ => return Err(MonsterError::Todo("mismatch deserializing map cons"))
+            }
+        }
+        match val {
+            RADTValue::Sum { kind: 0, value } if **value == RADTValue::Product(Vec::new()) => {
+                Ok(result)
+            },
+            _ => Err(MonsterError::Todo("mismatch deserializing map nil"))
+        }
     }
 }
 
@@ -67,7 +94,7 @@ impl DeserializeFromRADTValue for usize {
         use std::convert::TryInto;
         let body_hash = sure!(val, RADTValue::Hash(h) => h; return Err(MonsterError::BridgedMistypedDependency));
         let bytes = match deps.get(&body_hash) {
-            Some(Item::Value(TypedValue{kind:t_usize, value})) => return usize::deserialize(value, deps),
+            Some(Item::Value(TypedValue{kind, value})) if *kind == t_usize => return usize::deserialize(value, deps),
             Some(Item::Blob(Blob{bytes})) => &bytes[..],
             None => return Err(MonsterError::BridgedMissingDependency("a usize's bytes")),
             _ => return Err(MonsterError::BridgedMistypedDependency),
@@ -179,14 +206,38 @@ impl Bridged for String {
 
 impl DeserializeFromRADTValue for String {
     fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
+        println!("deser string");
+        let (_,t_string) = String::radt();
         let body = sure!(val, RADTValue::Hash(h) => h; return Err(MonsterError::BridgedMistypedDependency));
         let bytes = match deps.get(&body) {
-            Some(Item::Value(TypedValue{kind:t_usize, value})) => return String::deserialize(value, deps),
+            Some(Item::Value(TypedValue{kind, value})) if *kind == t_string => return String::deserialize(value, deps),
             Some(Item::Blob(b)) => b.bytes.clone(),
-            None => return Err(MonsterError::BridgedMissingDependency("string bytes")),
+            None => {
+                dbg!("ah", &body, deps.keys().collect::<Vec<_>>());
+                return Err(MonsterError::BridgedMissingDependency("string bytes"));
+            },
             _ => return Err(MonsterError::BridgedMistypedDependency),
         };
         String::from_utf8(bytes).map_err(|e| MonsterError::BridgedMistypedDependency)
+    }
+}
+
+impl FetchStrategy for String {
+    fn hydrate(self_hash: Hash, db: &Db) -> Result<Self, MonsterError> {
+        let s = db.get(self_hash)?;
+        match s {
+            Item::Value(val) => {
+                let (_,t_string) = String::radt();
+                if val.kind != t_string {
+                    return Err(MonsterError::Todo("Attempt to String::hydrate a non-string value"));
+                }
+                let body_hash = sure!(val.value, RADTValue::Hash(h) => h);
+                let body = db.get(body_hash)?;
+                let bytes = sure!(body, Item::Blob(Blob{bytes}) => bytes);
+                Ok(String::from_utf8(bytes).map_err(|e|MonsterError::Todo("Invalid utf8 in string blob"))?)
+            },
+            _ => Err(MonsterError::Todo("Attempt to String::hydrate a non-value item"))
+        }
     }
 }
 
