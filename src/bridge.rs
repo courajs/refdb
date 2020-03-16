@@ -240,6 +240,26 @@ impl FetchStrategy for String {
         }
     }
 }
+impl FetchStrategy for usize {
+    fn hydrate(self_hash: Hash, db: &Db) -> Result<Self, MonsterError> {
+        use std::convert::TryInto;
+        let s = db.get(self_hash)?;
+        match s {
+            Item::Value(val) => {
+                let (_,t_usize) = usize::radt();
+                if val.kind != t_usize {
+                    return Err(MonsterError::Todo("Attempt to usize::hydrate a non-uszie value"));
+                }
+                let body_hash = sure!(val.value, RADTValue::Hash(h) => h);
+                let body = db.get(body_hash)?;
+                let bytes = sure!(body, Item::Blob(Blob{bytes}) => bytes);
+                let ary = bytes[..].try_into().map_err(|e|MonsterError::Todo("wrong number of bytes for a usize body"))?;
+                Ok(usize::from_be_bytes(ary))
+            },
+            _ => Err(MonsterError::Todo("Attempt to usize::hydrate a non-value item")),
+        }
+    }
+}
 
 
 impl Bridged for RADT {
