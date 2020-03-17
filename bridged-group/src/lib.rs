@@ -51,21 +51,31 @@ fn ty_to_radt_tokens(ty: &Ty, locals: &HashMap<Ty, usize>) -> TwokenStream {
     }
 }
 
+fn find_names(f: &File) -> Vec<Ident> {
+    let mut finder = ItemNamesCollector::new();
+    finder.visit_file(f);
+    finder.names
+}
+fn find_defs(f: &File, names: &[Ident]) -> Vec<Def> {
+    let mut finder = DefinitionsCollector::new(names.to_vec());
+    finder.visit_file(f);
+    finder.defs
+}
+fn strip_hash_macros(f: &mut File) {
+    StripHashMacros.visit_file_mut(f);
+}
+
 fn bridged_group_impl(mut file: File) -> impl ToTokens {
     let uniq = pop_uniqueness(&mut file.attrs).expect("should provide uniqueness");
-
-    let mut name_finder = ItemNamesCollector::new();
-    name_finder.visit_file(&file);
-    let names = name_finder.names;
-
-    let mut defs_finder = DefinitionsCollector::new(names.clone());
-    defs_finder.visit_file(&file);
-    StripHashMacros.visit_file_mut(&mut file);
-    let defs = defs_finder.defs;
+    let names = find_names(&file);
+    let defs = find_defs(&file, &names);
+    strip_hash_macros(&mut file);
 
     let num_main_types = defs.len();
 
+    // types there are a Vec of, which we serialize as a cons list
     let mut vectorized_types = IndexSet::new();
+    // types there are a map of, which we serialize as a cons list of key/value pairs
     let mut mapped_types = IndexSet::new();
     for def in defs.iter() {
         for ty in def.types() {
@@ -81,6 +91,8 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
         }
     }
 
+    // mapping from Ty to index for types represented directly as a radt item - vecs, maps, and
+    // each item in the bridged group
     let mut locals = HashMap::new();
     locals.extend(defs.iter().enumerate().map(|(i, def)| {
         (Ty::Ingroup(def.name()), i)
@@ -99,8 +111,9 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
         ty_to_radt_tokens(ty, &locals)
     };
 
-    let mut radt_items = Vec::new();
 
+    // core radt items for each item in the group
+    let mut radt_items = Vec::new();
     radt_items.extend(defs.iter().map(|def| {
         match def {
             Def::Struct(StructDef{fields, ..}) => {
@@ -129,9 +142,12 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
         }
     }));
 
-    if locals.len() > num_main_types {
+    // insert nil
+    if vectorized_types.len() > 0 || mapped_types.len() > 0 {
         radt_items.push(quote!{rf0::types::RADTItem::Product(Vec::new())});
     }
+
+    // radt items for each vec type
     let nil_index = num_main_types;
     if vectorized_types.len() > 0 {
         radt_items.extend(vectorized_types.iter().enumerate().map(|(i, ty)| {
@@ -150,6 +166,8 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
             }
         }));
     }
+
+    // radt items for each map type
     if mapped_types.len() > 0 {
         radt_items.extend(mapped_types.iter().enumerate().map(|(i, (from, to))| {
             // each main item, shared nil, cons+list for each vec
@@ -173,6 +191,8 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
         }));
     }
 
+    // body for group_ids method. Passed down the call chain during serialization so
+    // types know whether to serialize inline or as a Hash ref to a dependency
     let type_ids = {
         // let group_items = names.iter().map(|name| quote!{std::any::TypeId::of::<#name>()});
         quote! {
@@ -182,23 +202,7 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
         }
     };
 
-    fn fields_as_product_fields(fields: &ItemFields) -> Vec<TwokenStream> {
-        match fields {
-            ItemFields::Unit => Vec::new(),
-            ItemFields::TupleLike(fields) => {
-                (0..fields.len()).map(|i| {
-                    let index = syn::Index::from(i);
-                    quote! { self.#index.serialize(&mut deps, &group) }
-                }).collect()
-            },
-            ItemFields::StructLike(fields) => {
-                fields.iter().map(|(name,_ty)| {
-                    quote! { self.#name.serialize(&mut deps, &group) }
-                }).collect()
-            },
-        }
-    }
-
+    // actual implementations of Bridged, Serialize, etc for each group item
     let impls = defs.into_iter().enumerate().map(|(index, def)| {
         let name = def.name();
         let uniq = uniq.clone();
@@ -315,7 +319,20 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
         };
         let to_value = match def {
             Def::Struct(StructDef{fields,..}) => {
-                let field_values = fields_as_product_fields(&fields);
+                let field_values = match fields {
+                    ItemFields::Unit => Vec::new(),
+                    ItemFields::TupleLike(fields) => {
+                        (0..fields.len()).map(|i| {
+                            let index = syn::Index::from(i);
+                            quote! { self.#index.serialize(&mut deps, &group) }
+                        }).collect()
+                    },
+                    ItemFields::StructLike(fields) => {
+                        fields.iter().map(|(name,_ty)| {
+                            quote! { self.#name.serialize(&mut deps, &group) }
+                        }).collect()
+                    },
+                };
                 quote! {
                     let mut deps = Vec::new();
                     let group = Self::group_ids();
