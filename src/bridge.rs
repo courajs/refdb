@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use std::collections::BTreeMap;
 use std::iter::FromIterator;
 use std::any::TypeId;
+use lazy_static::*;
 
 use crate::core::*;
 use crate::types::*;
@@ -13,10 +14,15 @@ use crate::storage::*;
 use crate::error::MonsterError;
 
 pub trait Bridged: Sized + 'static {
-    fn radt() -> (RADT, TypeRef);
     fn to_value(&self) -> (TypedValue, Vec<Item>);
     fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError>;
     fn group_ids() -> HashSet<TypeId>;
+    fn radt() -> (RADT, TypeRef);
+    // fn radt_ref() -> &'static RADT;
+    // fn type_ref() -> TypeRef;
+    // fn radt() -> (RADT, TypeRef) {
+    //     (Self::radt_ref().clone(), Self::type_ref())
+    // }
 }
 
 pub trait FetchStrategy: Sized {
@@ -165,12 +171,31 @@ pub trait Labeled {
     fn label() -> LabelSet;
 }
 
+lazy_static! {
+    pub static ref STRING_RADT: RADT = RADT {
+        uniqueness: b"core:utf8-------".to_owned(),
+        items: vec![
+            RADTItem::ExternalType(BLOB_TYPE_REF),
+        ],
+    };
+    pub static ref STRING_RADT_TYPE_HASH: Hash = STRING_RADT.typing().hash();
+}
+
 impl Bridged for String {
     fn group_ids() -> HashSet<TypeId> {
         let mut h = HashSet::new();
         h.insert(TypeId::of::<Self>());
         h
     }
+    // fn radt_ref() -> &'static RADT {
+    //     STRING_RADT
+    // }
+    // fn type_ref() -> TypeRef {
+    //     TypeRef {
+    //         definition: STRING_RADT_TYPE_HASH,
+    //         item: 0,
+    //     }
+    // }
     fn radt() -> (RADT, TypeRef) {
         let t = RADT {
             uniqueness: b"core:utf8-------".to_owned(),
@@ -262,170 +287,170 @@ impl FetchStrategy for usize {
 }
 
 
-impl Bridged for RADT {
-    fn group_ids() -> HashSet<TypeId> {
-        todo!()
-    }
-    fn radt() -> (RADT, TypeRef) {
-        let (_, typeref) = TypeRef::radt();
-        let (_, u_size) = usize::radt();
-        let r = RADT {
-            uniqueness: b"core:radt-------".to_owned(),
-            items: vec![
-                // 0: nil
-                RADTItem::Product(Vec::new()),
-                // 1: ExternalType
-                RADTItem::ExternalType(typeref),
-                // 2: Sum
-                RADTItem::CycleRef(7),
-                // 3: Product
-                RADTItem::CycleRef(7),
-                // 4: CycleRef
-                RADTItem::ExternalType(u_size),
-                // 5: RADTItem
-                RADTItem::Sum(vec![
-                    RADTItem::CycleRef(1),
-                    RADTItem::CycleRef(2),
-                    RADTItem::CycleRef(3),
-                    RADTItem::CycleRef(4),
-                ]),
-                // 6: Cons RADTItem
-                RADTItem::Product(vec![
-                    RADTItem::CycleRef(5),
-                    RADTItem::CycleRef(7),
-                ]),
-                // 7: List RADTItem
-                RADTItem::Sum(vec![
-                    RADTItem::CycleRef(0),
-                    RADTItem::CycleRef(6),
-                ]),
-                // 8: RADT
-                RADTItem::Product(vec![
-                    RADTItem::ExternalType(BLOB_TYPE_REF),
-                    RADTItem::CycleRef(7),
-                ]),
-            ],
-        };
-        let typing = Typing {
-            kind: RADT_TYPE_REF,
-            data: r.hash(),
-        };
-        (r, TypeRef { definition: typing.hash(), item: 8 })
-    }
-    fn to_value(&self) -> (TypedValue, Vec<Item>) {
-        fn radt_item_to_value(item: &RADTItem, deps: &mut Vec<Item>) -> RADTValue {
-            match item {
-                RADTItem::ExternalType(other_type) => {
-                    let (other_val, mut ref_deps) = other_type.to_value();
-                    deps.append(&mut ref_deps);
-                    let other_typing = Item::Value(other_val);
-                    let other_hash = other_typing.hash();
-                    deps.push(other_typing);
-                    RADTValue::Sum { kind: 0, value: Box::new(RADTValue::Hash(other_hash)) }
-                },
-                RADTItem::Sum(variants) => {
-                    RADTValue::Sum {
-                        kind: 1,
-                        value: Box::new(translate_vec_to_value_list(variants.iter(), |item| radt_item_to_value(item, deps))),
-                    }
-                },
-                RADTItem::Product(fields) => {
-                    RADTValue::Sum {
-                        kind: 2,
-                        value: Box::new(translate_vec_to_value_list(fields.iter(), |item| radt_item_to_value(item, deps))),
-                    }
-                },
-                RADTItem::CycleRef(item) => {
-                    let (u_size, mut num_deps) = item.to_value();
-                    deps.append(&mut num_deps);
-                    let item_typing = Item::Value(u_size);
-                    let item_hash = item_typing.hash();
-                    deps.push(item_typing);
-                    RADTValue::Sum {
-                        kind: 3,
-                        value: Box::new(RADTValue::Hash(item_hash)),
-                    }
-                },
-            }
-        }
-
-        let mut deps = Vec::new();
-
-        let uniq_bytes = self.uniqueness.to_vec();
-        let uniq_blob = Blob{bytes: uniq_bytes};
-        let uniq_hash = uniq_blob.hash();
-        deps.push(Item::Blob(uniq_blob));
-
-        let val = RADTValue::Product(vec![
-                    RADTValue::Hash(uniq_hash),
-                    translate_vec_to_value_list(self.items.iter(), |item| radt_item_to_value(item, &mut deps)),
-        ]);
-        let (rad, typeref) = Self::radt();
-        debug_assert!(validate_radt_instance(&rad, typeref.item, &val).is_ok(), "{:?}", validate_radt_instance(&rad, typeref.item, &val));
-        let typed = TypedValue { kind: typeref, value: val };
-        (typed, deps)
-    }
-    fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
-        let (rad, t) = Self::radt();
-        if v.kind != t {
-            return Err(MonsterError::BridgedMistypedDependency);
-        }
-        validate_radt_instance(&rad, t.item, &v.value)?;
-        let (uniq_hash, items) = sure!(&v.value, RADTValue::Product(fields) => {
-            sure!(fields[0], RADTValue::Hash(ref h) => (h, &fields[1]))
-        });
-
-        let uniqueness = match deps.get(uniq_hash) {
-            Some(Item::Blob(Blob{bytes})) => {
-                if bytes.len() == 16 {
-                    let mut uniq = [0;16];
-                    uniq.copy_from_slice(bytes);
-                    uniq
-                } else {
-                    return Err(MonsterError::BridgedMistypedDependency);
-                }
-            },
-            Some(_) => return Err(MonsterError::BridgedMistypedDependency),
-            None => return Err(MonsterError::BridgedMissingDependency("radt uniqueness bytes")),
-        };
-
-        fn do_item(item: &RADTValue, deps: &HashMap<Hash, Item>) -> Result<RADTItem, MonsterError> {
-            match item {
-                // ExternalType
-                RADTValue::Sum{kind: 0, value} => {
-                    let h = sure!(value.deref(), RADTValue::Hash(h) => h);
-                    match deps.get(h) {
-                        Some(Item::Value(tr)) => Ok(RADTItem::ExternalType(TypeRef::from_value(tr, deps)?)),
-                        Some(_) => Err(MonsterError::BridgedMistypedDependency),
-                        None => Err(MonsterError::BridgedMissingDependency("a radt's ExternalType's TypeRef")),
-                    }
-                },
-                // Sum
-                RADTValue::Sum{kind: 1, value} => {
-                    Ok(RADTItem::Sum(translate_value_list_to_vec(value.deref(), |item| do_item(item, deps))?))
-                },
-                // Product
-                RADTValue::Sum{kind: 2, value} => {
-                    Ok(RADTItem::Product(translate_value_list_to_vec(value.deref(), |item| do_item(item, deps))?))
-                },
-                // CycleRef
-                RADTValue::Sum{kind: 3, value} => {
-                    let h = sure!(value.deref(), RADTValue::Hash(h) => h);
-                    match deps.get(h) {
-                        Some(Item::Value(tr)) => Ok(RADTItem::CycleRef(usize::from_value(tr, deps)?)),
-                        Some(_) => Err(MonsterError::BridgedMistypedDependency),
-                        None => Err(MonsterError::BridgedMissingDependency("a radt's CycleRef's item number")),
-                    }
-                },
-                _ => panic!("It validated, this shouldn't happen")
-            }
-        }
-
-        let r_items = translate_value_list_to_vec(items, |item| do_item(item, deps))?;
-
-        Ok(RADT { uniqueness, items: r_items }) 
-    }
-}
+// impl Bridged for RADT {
+//     fn group_ids() -> HashSet<TypeId> {
+//         todo!()
+//     }
+//     fn radt() -> (RADT, TypeRef) {
+//         let (_, typeref) = TypeRef::radt();
+//         let (_, u_size) = usize::radt();
+//         let r = RADT {
+//             uniqueness: b"core:radt-------".to_owned(),
+//             items: vec![
+//                 // 0: nil
+//                 RADTItem::Product(Vec::new()),
+//                 // 1: ExternalType
+//                 RADTItem::ExternalType(typeref),
+//                 // 2: Sum
+//                 RADTItem::CycleRef(7),
+//                 // 3: Product
+//                 RADTItem::CycleRef(7),
+//                 // 4: CycleRef
+//                 RADTItem::ExternalType(u_size),
+//                 // 5: RADTItem
+//                 RADTItem::Sum(vec![
+//                     RADTItem::CycleRef(1),
+//                     RADTItem::CycleRef(2),
+//                     RADTItem::CycleRef(3),
+//                     RADTItem::CycleRef(4),
+//                 ]),
+//                 // 6: Cons RADTItem
+//                 RADTItem::Product(vec![
+//                     RADTItem::CycleRef(5),
+//                     RADTItem::CycleRef(7),
+//                 ]),
+//                 // 7: List RADTItem
+//                 RADTItem::Sum(vec![
+//                     RADTItem::CycleRef(0),
+//                     RADTItem::CycleRef(6),
+//                 ]),
+//                 // 8: RADT
+//                 RADTItem::Product(vec![
+//                     RADTItem::ExternalType(BLOB_TYPE_REF),
+//                     RADTItem::CycleRef(7),
+//                 ]),
+//             ],
+//         };
+//         let typing = Typing {
+//             kind: RADT_TYPE_REF,
+//             data: r.hash(),
+//         };
+//         (r, TypeRef { definition: typing.hash(), item: 8 })
+//     }
+//     fn to_value(&self) -> (TypedValue, Vec<Item>) {
+//         fn radt_item_to_value(item: &RADTItem, deps: &mut Vec<Item>) -> RADTValue {
+//             match item {
+//                 RADTItem::ExternalType(other_type) => {
+//                     let (other_val, mut ref_deps) = other_type.to_value();
+//                     deps.append(&mut ref_deps);
+//                     let other_typing = Item::Value(other_val);
+//                     let other_hash = other_typing.hash();
+//                     deps.push(other_typing);
+//                     RADTValue::Sum { kind: 0, value: Box::new(RADTValue::Hash(other_hash)) }
+//                 },
+//                 RADTItem::Sum(variants) => {
+//                     RADTValue::Sum {
+//                         kind: 1,
+//                         value: Box::new(translate_vec_to_value_list(variants.iter(), |item| radt_item_to_value(item, deps))),
+//                     }
+//                 },
+//                 RADTItem::Product(fields) => {
+//                     RADTValue::Sum {
+//                         kind: 2,
+//                         value: Box::new(translate_vec_to_value_list(fields.iter(), |item| radt_item_to_value(item, deps))),
+//                     }
+//                 },
+//                 RADTItem::CycleRef(item) => {
+//                     let (u_size, mut num_deps) = item.to_value();
+//                     deps.append(&mut num_deps);
+//                     let item_typing = Item::Value(u_size);
+//                     let item_hash = item_typing.hash();
+//                     deps.push(item_typing);
+//                     RADTValue::Sum {
+//                         kind: 3,
+//                         value: Box::new(RADTValue::Hash(item_hash)),
+//                     }
+//                 },
+//             }
+//         }
+// 
+//         let mut deps = Vec::new();
+// 
+//         let uniq_bytes = self.uniqueness.to_vec();
+//         let uniq_blob = Blob{bytes: uniq_bytes};
+//         let uniq_hash = uniq_blob.hash();
+//         deps.push(Item::Blob(uniq_blob));
+// 
+//         let val = RADTValue::Product(vec![
+//                     RADTValue::Hash(uniq_hash),
+//                     translate_vec_to_value_list(self.items.iter(), |item| radt_item_to_value(item, &mut deps)),
+//         ]);
+//         let (rad, typeref) = Self::radt();
+//         debug_assert!(validate_radt_instance(&rad, typeref.item, &val).is_ok(), "{:?}", validate_radt_instance(&rad, typeref.item, &val));
+//         let typed = TypedValue { kind: typeref, value: val };
+//         (typed, deps)
+//     }
+//     fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
+//         let (rad, t) = Self::radt();
+//         if v.kind != t {
+//             return Err(MonsterError::BridgedMistypedDependency);
+//         }
+//         validate_radt_instance(&rad, t.item, &v.value)?;
+//         let (uniq_hash, items) = sure!(&v.value, RADTValue::Product(fields) => {
+//             sure!(fields[0], RADTValue::Hash(ref h) => (h, &fields[1]))
+//         });
+// 
+//         let uniqueness = match deps.get(uniq_hash) {
+//             Some(Item::Blob(Blob{bytes})) => {
+//                 if bytes.len() == 16 {
+//                     let mut uniq = [0;16];
+//                     uniq.copy_from_slice(bytes);
+//                     uniq
+//                 } else {
+//                     return Err(MonsterError::BridgedMistypedDependency);
+//                 }
+//             },
+//             Some(_) => return Err(MonsterError::BridgedMistypedDependency),
+//             None => return Err(MonsterError::BridgedMissingDependency("radt uniqueness bytes")),
+//         };
+// 
+//         fn do_item(item: &RADTValue, deps: &HashMap<Hash, Item>) -> Result<RADTItem, MonsterError> {
+//             match item {
+//                 // ExternalType
+//                 RADTValue::Sum{kind: 0, value} => {
+//                     let h = sure!(value.deref(), RADTValue::Hash(h) => h);
+//                     match deps.get(h) {
+//                         Some(Item::Value(tr)) => Ok(RADTItem::ExternalType(TypeRef::from_value(tr, deps)?)),
+//                         Some(_) => Err(MonsterError::BridgedMistypedDependency),
+//                         None => Err(MonsterError::BridgedMissingDependency("a radt's ExternalType's TypeRef")),
+//                     }
+//                 },
+//                 // Sum
+//                 RADTValue::Sum{kind: 1, value} => {
+//                     Ok(RADTItem::Sum(translate_value_list_to_vec(value.deref(), |item| do_item(item, deps))?))
+//                 },
+//                 // Product
+//                 RADTValue::Sum{kind: 2, value} => {
+//                     Ok(RADTItem::Product(translate_value_list_to_vec(value.deref(), |item| do_item(item, deps))?))
+//                 },
+//                 // CycleRef
+//                 RADTValue::Sum{kind: 3, value} => {
+//                     let h = sure!(value.deref(), RADTValue::Hash(h) => h);
+//                     match deps.get(h) {
+//                         Some(Item::Value(tr)) => Ok(RADTItem::CycleRef(usize::from_value(tr, deps)?)),
+//                         Some(_) => Err(MonsterError::BridgedMistypedDependency),
+//                         None => Err(MonsterError::BridgedMissingDependency("a radt's CycleRef's item number")),
+//                     }
+//                 },
+//                 _ => panic!("It validated, this shouldn't happen")
+//             }
+//         }
+// 
+//         let r_items = translate_value_list_to_vec(items, |item| do_item(item, deps))?;
+// 
+//         Ok(RADT { uniqueness, items: r_items }) 
+//     }
+// }
 
 // If an iterator has an arbitrary order, (like HashMap entries),
 // it might as well be double-ended.
