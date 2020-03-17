@@ -995,7 +995,7 @@ mod tests {
 
     #[test]
     fn test_env() {
-        let mut types = HashMap::<Hash, LabelSet>::new();
+        let mut types = BTreeMap::<Hash, LabelSet>::new();
         types.insert(Hash::of(b"quilt"), LabelSet(vec![
             Label {
                 name: "Value".to_owned(),
@@ -1003,7 +1003,7 @@ mod tests {
             },
         ]));
 
-        let mut vars = HashMap::<String, Hash>::new();
+        let mut vars = BTreeMap::<String, Hash>::new();
         vars.insert("bookmarks".to_owned(), Hash::of(b"grog"));
 
         let e = Env {
