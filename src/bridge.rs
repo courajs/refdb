@@ -15,7 +15,7 @@ use crate::error::MonsterError;
 
 pub trait Bridged: Sized + 'static {
     fn to_value(&self) -> (TypedValue, Vec<Item>);
-    fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError>;
+    fn from_value(v: &TypedValue, deps: & impl DependencySource) -> Result<Self, MonsterError>;
     fn group_ids() -> HashSet<TypeId>;
     fn radt() -> (RADT, TypeRef);
     // fn radt_ref() -> &'static RADT;
@@ -25,7 +25,7 @@ pub trait Bridged: Sized + 'static {
     // }
 }
 pub trait DeserializeFromRADTValue: Sized {
-    fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError>;
+    fn deserialize(val: &RADTValue, deps: & impl DependencySource) -> Result<Self, MonsterError>;
 }
 pub trait SerializeToRADTValue {
     fn serialize(&self, deps: &mut Vec<Item>, group: &HashSet<TypeId>) -> RADTValue;
@@ -39,12 +39,46 @@ impl<T> TypeRefed for T where T: Bridged {
     }
 }
 
+pub trait DependencySource {
+    fn get(&self, h: &Hash) -> Option<Item>;
+}
+impl DependencySource for HashMap<Hash, Item> {
+    fn get(&self, h: &Hash) -> Option<Item> {
+        Self::get(self, h).map(|v|(*v).clone())
+    }
+}
+
+use std::cell::RefCell;
+pub struct HashMapCachedDb<'a, 'b> {
+    db: &'b Db<'a>,
+    cache: RefCell<HashMap<Hash, Item>>,
+}
+impl<'a, 'b> HashMapCachedDb<'a, 'b> {
+    pub fn new(db: &'b Db<'a>) -> Self {
+        Self {
+            db,
+            cache: RefCell::new(HashMap::new()),
+        }
+    }
+}
+impl DependencySource for HashMapCachedDb<'_,'_> {
+    fn get(&self, h: &Hash) -> Option<Item> {
+        let mut cache = self.cache.borrow_mut();
+        if let Some(val) = cache.get(h) {
+            return Some(val.clone())
+        }
+        let val = self.db.get(*h).expect("xcoidnlll");
+        cache.insert(*h, val.clone());
+        Some(val)
+    }
+}
+
 pub trait FetchStrategy: Sized {
     fn hydrate(self_hash: Hash, db: &Db) -> Result<Self, MonsterError>;
 }
 
 impl DeserializeFromRADTValue for Hash {
-    fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
+    fn deserialize(val: &RADTValue, deps: & impl DependencySource) -> Result<Self, MonsterError> {
         match val {
             RADTValue::Hash(h) => Ok(*h),
             _ => Err(MonsterError::Todo("mismatch deserializing hash"))
@@ -52,12 +86,12 @@ impl DeserializeFromRADTValue for Hash {
     }
 }
 impl<T> DeserializeFromRADTValue for Box<T> where T: DeserializeFromRADTValue {
-    fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
+    fn deserialize(val: &RADTValue, deps: & impl DependencySource) -> Result<Self, MonsterError> {
         Ok(Box::new(T::deserialize(val, deps)?))
     }
 }
 impl<T> DeserializeFromRADTValue for Vec<T> where T: DeserializeFromRADTValue {
-    fn deserialize(mut val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
+    fn deserialize(mut val: &RADTValue, deps: & impl DependencySource) -> Result<Self, MonsterError> {
         let mut result = Vec::new();
         while let RADTValue::Sum { kind: 1, value } = val {
             match value.deref() {
@@ -77,7 +111,7 @@ impl<T> DeserializeFromRADTValue for Vec<T> where T: DeserializeFromRADTValue {
     }
 }
 impl<K,V> DeserializeFromRADTValue for BTreeMap<K,V> where K: DeserializeFromRADTValue + Ord, V: DeserializeFromRADTValue {
-    fn deserialize(mut val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
+    fn deserialize(mut val: &RADTValue, deps: & impl DependencySource) -> Result<Self, MonsterError> {
         let mut result = Self::new();
         while let RADTValue::Sum { kind: 1, value } = val {
             match value.deref() {
@@ -106,11 +140,12 @@ impl<K,V> DeserializeFromRADTValue for BTreeMap<K,V> where K: DeserializeFromRAD
 }
 
 impl DeserializeFromRADTValue for usize {
-    fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
+    fn deserialize(val: &RADTValue, deps: & impl DependencySource) -> Result<Self, MonsterError> {
         let (_,t_usize) = Self::radt();
         use std::convert::TryInto;
         let body_hash = sure!(val, RADTValue::Hash(h) => h; return Err(MonsterError::BridgedMistypedDependency));
-        let bytes = match deps.get(&body_hash) {
+        let item = deps.get(&body_hash);
+        let bytes = match &item {
             Some(Item::Value(TypedValue{kind, value})) if *kind == t_usize => return usize::deserialize(value, deps),
             Some(Item::Blob(Blob{bytes})) => &bytes[..],
             None => return Err(MonsterError::BridgedMissingDependency("a usize's bytes")),
@@ -178,11 +213,6 @@ impl<K,V> SerializeToRADTValue for BTreeMap<K,V> where K: SerializeToRADTValue, 
 
 use std::convert::TryFrom;
 use std::convert::TryInto;
-fn deserialize_byte_array<'a, T: TryFrom<&'a[u8]>>(val: &RADTValue, deps: &'a HashMap<Hash,Item>) -> Result<T, MonsterError> {
-    let h = sure!(val, RADTValue::Hash(h) => h);
-    let bytes = sure!(deps.get(&h), Some(Item::Blob(Blob{bytes})) => bytes; return Err(MonsterError::Todo("improper dep for byte array")));
-    bytes[..].try_into().map_err(|e|MonsterError::Todo("wrong blob len for a bridged byte array"))
-}
 fn serialize_byte_array(s: &[u8], deps: &mut Vec<Item>, group: &HashSet<TypeId>) -> RADTValue {
     let b = Item::Blob(Blob{bytes:s.to_vec()});
     let h = b.hash();
@@ -194,8 +224,10 @@ macro_rules! byte_array_lengths {
     ( $($n:expr)+ ) => {
         $(
             impl DeserializeFromRADTValue for [u8; $n] {
-                fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
-                    deserialize_byte_array(val, deps)
+                fn deserialize(val: &RADTValue, deps: & impl DependencySource) -> Result<Self, MonsterError> {
+                    let h = sure!(val, RADTValue::Hash(h) => h);
+                    let bytes = sure!(deps.get(&h), Some(Item::Blob(Blob{bytes})) => bytes; return Err(MonsterError::Todo("improper dep for byte array")));
+                    bytes[..].try_into().map_err(|e|MonsterError::Todo("wrong blob len for a bridged byte array"))
                 }
             }
             impl SerializeToRADTValue for [u8; $n] {
@@ -266,7 +298,7 @@ impl Bridged for String {
              Item::Blob(bytes),
         ])
     }
-    fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
+    fn from_value(v: &TypedValue, deps: & impl DependencySource) -> Result<Self, MonsterError> {
         let (rad, t) = Self::radt();
         if t != v.kind {
             return Err(MonsterError::BridgedMistypedDependency)
@@ -277,15 +309,15 @@ impl Bridged for String {
 }
 
 impl DeserializeFromRADTValue for String {
-    fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
+    fn deserialize(val: &RADTValue, deps: & impl DependencySource) -> Result<Self, MonsterError> {
         println!("deser string");
         let (_,t_string) = String::radt();
         let body = sure!(val, RADTValue::Hash(h) => h; return Err(MonsterError::BridgedMistypedDependency));
         let bytes = match deps.get(&body) {
-            Some(Item::Value(TypedValue{kind, value})) if *kind == t_string => return String::deserialize(value, deps),
+            Some(Item::Value(TypedValue{kind, value})) if kind == t_string => return String::deserialize(&value, deps),
             Some(Item::Blob(b)) => b.bytes.clone(),
             None => {
-                dbg!("ah", &body, deps.keys().collect::<Vec<_>>());
+                // dbg!("ah", &body, deps.keys().collect::<Vec<_>>());
                 return Err(MonsterError::BridgedMissingDependency("string bytes"));
             },
             _ => return Err(MonsterError::BridgedMistypedDependency),
@@ -382,7 +414,7 @@ impl Bridged for usize {
              Item::Blob(blob),
         ])
     }
-    fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
+    fn from_value(v: &TypedValue, deps: & impl DependencySource) -> Result<Self, MonsterError> {
         let (rad, t) = Self::radt();
         if t != v.kind {
             return Err(MonsterError::BridgedMistypedDependency)
@@ -672,7 +704,7 @@ impl Bridged for crate::func::FunctionDefinition {
         todo!()
     }
 
-    fn from_value(v: &TypedValue, deps: &HashMap<Hash, Item>) -> Result<Self, MonsterError> {
+    fn from_value(v: &TypedValue, deps: & impl DependencySource) -> Result<Self, MonsterError> {
         todo!()
     }
 }

@@ -46,7 +46,7 @@ pub struct Db<'a> {
     pub store: &'a rkv::SingleStore,
 }
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug, PartialEq, Eq, Hash, Clone)]
 pub enum Item {
     Blob(Blob),
     BlobRef(Hash),
@@ -235,93 +235,99 @@ impl<'a> Db<'a> {
     }
 
     pub fn get_env(&self, h: Hash) -> Result<Option<Env>, MonsterError> {
-        println!("1");
-        fn string_hashes_for_label(v: &RADTValue, string_hashes: &mut Vec<Hash>) {
-            let fields = sure!(v, RADTValue::Product(fields) => fields);
-            string_hashes.push(sure!(&fields[0], RADTValue::Hash(h) => *h));
-            match &fields[1] {
-                RADTValue::Sum{kind:0,value} | RADTValue::Sum{kind:1,value} => {
-                    let mut sub_labels = value.deref();
-                    while let RADTValue::Sum{kind:1,value} = sub_labels {
-                        let cons = sure!(value.deref(), RADTValue::Product(v) => v);
-                        string_hashes_for_label(&cons[0], string_hashes);
-                        sub_labels = &cons[1];
-                    }
-                },
-                _ => {}
-            }
-        }
-
-        println!("2");
         let stored = self.get(h)?;
         let typed = sure!(stored, Item::Value(v) => v; return Err(MonsterError::Todo("env wasn't a value")));
-        let (rad, env_typeref) = Env::radt();
-        if typed.kind != env_typeref {
-            return Err(MonsterError::Todo("Tried to get_env a non-env"));
-        }
+        let deps = crate::bridge::HashMapCachedDb::new(self);
+        Env::from_value(&typed, &deps).map(|e|Some(e))
 
-        println!("3");
-        let mut deps: HashMap<Hash, Item> = HashMap::new();
-        // already verified as it was constructed from bytes by .get()
 
-        let both = sure!(&typed.value, RADTValue::Product(v) => v);
-        let [mut labels, mut vars] = sure!(&both[..], [a,b]);
+        // println!("1");
+        // fn string_hashes_for_label(v: &RADTValue, string_hashes: &mut Vec<Hash>) {
+        //     let fields = sure!(v, RADTValue::Product(fields) => fields);
+        //     string_hashes.push(sure!(&fields[0], RADTValue::Hash(h) => *h));
+        //     match &fields[1] {
+        //         RADTValue::Sum{kind:0,value} | RADTValue::Sum{kind:1,value} => {
+        //             let mut sub_labels = value.deref();
+        //             while let RADTValue::Sum{kind:1,value} = sub_labels {
+        //                 let cons = sure!(value.deref(), RADTValue::Product(v) => v);
+        //                 string_hashes_for_label(&cons[0], string_hashes);
+        //                 sub_labels = &cons[1];
+        //             }
+        //         },
+        //         _ => {}
+        //     }
+        // }
 
-        println!("4");
-        let mut labelset_hashes = Vec::<Hash>::new();
-        while let RADTValue::Sum{kind:1, value} = labels {
-            let cons = sure!(value.deref(), RADTValue::Product(v) => v);
-            labels = &cons[1];
+        // println!("2");
+        // let stored = self.get(h)?;
+        // let typed = sure!(stored, Item::Value(v) => v; return Err(MonsterError::Todo("env wasn't a value")));
+        // let (rad, env_typeref) = Env::radt();
+        // if typed.kind != env_typeref {
+        //     return Err(MonsterError::Todo("Tried to get_env a non-env"));
+        // }
 
-            let entry = sure!(&cons[0], RADTValue::Product(v) => v);
-            let label_hash = sure!(&entry[1], RADTValue::Hash(h) => *h);
-            labelset_hashes.push(label_hash);
-        }
+        // println!("3");
+        // let mut deps: HashMap<Hash, Item> = HashMap::new();
+        // // already verified as it was constructed from bytes by .get()
 
-        println!("5");
+        // let both = sure!(&typed.value, RADTValue::Product(v) => v);
+        // let [mut labels, mut vars] = sure!(&both[..], [a,b]);
 
-        let mut string_hashes = Vec::<Hash>::new();
-        for h in labelset_hashes {
-            let labelset = self.get(h)?;
-            let mut label_pointer = sure!(&labelset, Item::Value(TypedValue{value,..}) => value);
-            while let RADTValue::Sum{kind:1, value} = label_pointer {
-                let cons = sure!(value.deref(), RADTValue::Product(v) => v);
-                label_pointer = &cons[1];
+        // println!("4");
+        // let mut labelset_hashes = Vec::<Hash>::new();
+        // while let RADTValue::Sum{kind:1, value} = labels {
+        //     let cons = sure!(value.deref(), RADTValue::Product(v) => v);
+        //     labels = &cons[1];
 
-                string_hashes_for_label(&cons[0], &mut string_hashes);
-            }
-            deps.insert(h, labelset);
-        }
+        //     let entry = sure!(&cons[0], RADTValue::Product(v) => v);
+        //     let label_hash = sure!(&entry[1], RADTValue::Hash(h) => *h);
+        //     labelset_hashes.push(label_hash);
+        // }
 
-        println!("6");
-        while let RADTValue::Sum{kind:1, value} = vars {
-            let cons = sure!(value.deref(), RADTValue::Product(v) => v);
-            vars = &cons[1];
+        // println!("5");
 
-            let entry = sure!(&cons[0], RADTValue::Product(v) => v);
-            let name_hash = sure!(&entry[0], RADTValue::Hash(h) => *h);
-            string_hashes.push(name_hash);
-        }
+        // let mut string_hashes = Vec::<Hash>::new();
+        // for h in labelset_hashes {
+        //     let labelset = self.get(h)?;
+        //     let mut label_pointer = sure!(&labelset, Item::Value(TypedValue{value,..}) => value);
+        //     while let RADTValue::Sum{kind:1, value} = label_pointer {
+        //         let cons = sure!(value.deref(), RADTValue::Product(v) => v);
+        //         label_pointer = &cons[1];
 
-        println!("7");
-        let mut string_body_hashes = Vec::new();
-        for h in string_hashes {
-            let s = self.get(h)?;
-            string_body_hashes.push(sure!(&s, Item::Value(TypedValue{value: RADTValue::Hash(h2), ..}) => *h2));
-            deps.insert(h, s);
-        }
+        //         string_hashes_for_label(&cons[0], &mut string_hashes);
+        //     }
+        //     deps.insert(h, labelset);
+        // }
 
-        println!("8");
-        for h in string_body_hashes {
-            let body = self.get(h)?;
-            deps.insert(h, body);
-        }
+        // println!("6");
+        // while let RADTValue::Sum{kind:1, value} = vars {
+        //     let cons = sure!(value.deref(), RADTValue::Product(v) => v);
+        //     vars = &cons[1];
 
-        println!("9");
-        dbg!(&typed, deps.keys().collect::<Vec<_>>());
-        let e = Env::from_value(&typed, &deps).map(|e| Some(e));
-        println!("10");
-        e
+        //     let entry = sure!(&cons[0], RADTValue::Product(v) => v);
+        //     let name_hash = sure!(&entry[0], RADTValue::Hash(h) => *h);
+        //     string_hashes.push(name_hash);
+        // }
+
+        // println!("7");
+        // let mut string_body_hashes = Vec::new();
+        // for h in string_hashes {
+        //     let s = self.get(h)?;
+        //     string_body_hashes.push(sure!(&s, Item::Value(TypedValue{value: RADTValue::Hash(h2), ..}) => *h2));
+        //     deps.insert(h, s);
+        // }
+
+        // println!("8");
+        // for h in string_body_hashes {
+        //     let body = self.get(h)?;
+        //     deps.insert(h, body);
+        // }
+
+        // println!("9");
+        // dbg!(&typed, deps.keys().collect::<Vec<_>>());
+        // let e = Env::from_value(&typed, &mut deps).map(|e| Some(e));
+        // println!("10");
+        // e
     }
 
     pub fn get_default_env_hash(&self) -> Result<Option<Hash>, MonsterError> {

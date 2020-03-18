@@ -224,7 +224,7 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
                 };
                 quote! {
                     impl rf0::bridge::DeserializeFromRADTValue for #name {
-                        fn deserialize(val: &rf0::types::RADTValue, deps: &std::collections::HashMap<rf0::core::Hash,rf0::storage::Item>) -> Result<Self, rf0::error::MonsterError> {
+                        fn deserialize(val: &rf0::types::RADTValue, deps: & impl rf0::bridge::DependencySource) -> Result<Self, rf0::error::MonsterError> {
                             use rf0::error::MonsterError;
                             use rf0::bridge::Bridged;
                             use rf0::bridge::DeserializeFromRADTValue;
@@ -234,7 +234,7 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
                             match val {
                                 RADTValue::Hash(h) => {
                                     let (_,tr) = <Self as Bridged>::radt();
-                                    match deps.get(h) {
+                                    match &deps.get(h) {
                                         Some(rf0::storage::Item::Value(TypedValue{kind:tr, value})) => {
                                             <Self as DeserializeFromRADTValue>::deserialize(value, deps)
                                         },
@@ -285,7 +285,7 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
                 });
                 quote! {
                     impl rf0::bridge::DeserializeFromRADTValue for #name {
-                        fn deserialize(val: &rf0::types::RADTValue, deps: &std::collections::HashMap<Hash,rf0::storage::Item>) -> Result<Self, rf0::error::MonsterError> {
+                        fn deserialize(val: &rf0::types::RADTValue, deps: & impl rf0::bridge::DependencySource) -> Result<Self, rf0::error::MonsterError> {
                             use std::ops::Deref;
                             use rf0::error::MonsterError;
                             use rf0::bridge::Bridged;
@@ -296,7 +296,7 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
                             match val {
                                 RADTValue::Hash(h) => {
                                     let (_,tr) = <Self as Bridged>::radt();
-                                    match deps.get(h) {
+                                    match &deps.get(h) {
                                         Some(rf0::storage::Item::Value(TypedValue{kind:tr, value})) => {
                                             <Self as DeserializeFromRADTValue>::deserialize(value, deps)
                                         },
@@ -411,7 +411,7 @@ fn bridged_group_impl(mut file: File) -> impl ToTokens {
                     use rf0::bridge::SerializeToRADTValue;
                     #to_value
                 }
-                fn from_value(v: &rf0::types::TypedValue, deps: &std::collections::HashMap<rf0::core::Hash, rf0::storage::Item>) -> Result<Self, rf0::error::MonsterError> {
+                fn from_value(v: &rf0::types::TypedValue, deps: & impl rf0::bridge::DependencySource) -> Result<Self, rf0::error::MonsterError> {
                     use rf0::types::TypedValue;
                     use rf0::bridge::Bridged;
                     use rf0::bridge::DeserializeFromRADTValue;
