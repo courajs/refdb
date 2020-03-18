@@ -24,14 +24,25 @@ pub trait Bridged: Sized + 'static {
     //     (Self::radt_ref().clone(), Self::type_ref())
     // }
 }
+pub trait DeserializeFromRADTValue: Sized {
+    fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError>;
+}
+pub trait SerializeToRADTValue {
+    fn serialize(&self, deps: &mut Vec<Item>, group: &HashSet<TypeId>) -> RADTValue;
+}
+pub trait TypeRefed {
+    fn type_ref() -> TypeRef;
+}
+impl<T> TypeRefed for T where T: Bridged {
+    fn type_ref() -> TypeRef {
+        Self::radt().1
+    }
+}
 
 pub trait FetchStrategy: Sized {
     fn hydrate(self_hash: Hash, db: &Db) -> Result<Self, MonsterError>;
 }
 
-pub trait DeserializeFromRADTValue: Sized {
-    fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError>;
-}
 impl DeserializeFromRADTValue for Hash {
     fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
         match val {
@@ -112,9 +123,6 @@ impl DeserializeFromRADTValue for usize {
     }
 }
 
-pub trait SerializeToRADTValue {
-    fn serialize(&self, deps: &mut Vec<Item>, group: &HashSet<TypeId>) -> RADTValue;
-}
 impl SerializeToRADTValue for Hash {
     fn serialize(&self, deps: &mut Vec<Item>, group: &HashSet<TypeId>) -> RADTValue {
         RADTValue::Hash(*self)
@@ -165,6 +173,63 @@ impl<K,V> SerializeToRADTValue for BTreeMap<K,V> where K: SerializeToRADTValue, 
         })
     }
 }
+
+
+
+use std::convert::TryFrom;
+use std::convert::TryInto;
+fn deserialize_byte_array<'a, T: TryFrom<&'a[u8]>>(val: &RADTValue, deps: &'a HashMap<Hash,Item>) -> Result<T, MonsterError> {
+    let h = sure!(val, RADTValue::Hash(h) => h);
+    let bytes = sure!(deps.get(&h), Some(Item::Blob(Blob{bytes})) => bytes; return Err(MonsterError::Todo("improper dep for byte array")));
+    bytes[..].try_into().map_err(|e|MonsterError::Todo("wrong blob len for a bridged byte array"))
+}
+fn serialize_byte_array(s: &[u8], deps: &mut Vec<Item>, group: &HashSet<TypeId>) -> RADTValue {
+    let b = Item::Blob(Blob{bytes:s.to_vec()});
+    let h = b.hash();
+    deps.push(b);
+    RADTValue::Hash(h)
+}
+
+macro_rules! byte_array_lengths {
+    ( $($n:expr)+ ) => {
+        $(
+            impl DeserializeFromRADTValue for [u8; $n] {
+                fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
+                    deserialize_byte_array(val, deps)
+                }
+            }
+            impl SerializeToRADTValue for [u8; $n] {
+                fn serialize(&self, deps: &mut Vec<Item>, group: &HashSet<TypeId>) -> RADTValue {
+                    serialize_byte_array(&self[..], deps, group)
+                }
+            }
+            impl TypeRefed for [u8; $n] {
+                fn type_ref() -> TypeRef {
+                    BLOB_TYPE_REF
+                }
+            }
+        )*
+    }
+}
+byte_array_lengths![4 8 16 32];
+
+
+// impl DeserializeFromRADTValue for [u8; 4] {
+//     fn deserialize(val: &RADTValue, deps: &HashMap<Hash,Item>) -> Result<Self, MonsterError> {
+//         deserialize_byte_array(val, deps)
+//     }
+// }
+// impl SerializeToRADTValue for [u8; 4] {
+//     fn serialize(&self, deps: &mut Vec<Item>, group: &HashSet<TypeId>) -> RADTValue {
+//         serialize_byte_array(&self[..], deps, group)
+//     }
+// }
+// impl TypeRefed for [u8; 4] {
+//     fn type_ref() -> TypeRef {
+//         BLOB_TYPE_REF
+//     }
+// }
+
 
 
 pub trait Labeled {

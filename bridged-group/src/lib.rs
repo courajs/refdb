@@ -41,12 +41,7 @@ fn ty_to_radt_tokens(ty: &Ty, locals: &HashMap<Ty, usize>) -> TwokenStream {
             quote! { rf0::types::RADTItem::CycleRef(#p) }
         },
         Ty::Other(ast_ty) => {
-            quote! {
-                {
-                    let (_,typeref) = <#ast_ty as rf0::bridge::Bridged>::radt();
-                    rf0::types::RADTItem::ExternalType(typeref)
-                }
-            }
+            quote! { rf0::types::RADTItem::ExternalType(<#ast_ty as rf0::bridge::TypeRefed>::type_ref()) }
         },
     }
 }

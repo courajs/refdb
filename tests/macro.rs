@@ -615,3 +615,53 @@ mod t14 {
         assert_eq!(Thing::from_value(&input, &deps).unwrap(), expected);
     }
 }
+
+mod t15 {
+    use super::*;
+
+    bridged_group!{
+        #![uniq(*b"1111222233334444")]
+        #[derive(Debug, Clone, PartialEq)]
+        struct Thing([u8; 4]);
+    }
+
+    #[test]
+    fn test_byte_array_radt() {
+        let expected_radt = RADT {
+            uniqueness: *b"1111222233334444",
+            items: vec![
+                RADTItem::Product(vec![
+                    RADTItem::ExternalType(BLOB_TYPE_REF),
+                ]),
+            ]
+        };
+        assert_eq!(Thing::radt().0, expected_radt);
+    }
+
+    #[test]
+    fn test_byte_array_serialize() {
+        let input = Thing(*b"1234");
+        let dep = Item::Blob(Blob{bytes:b"1234".to_vec()});
+        let h = dep.hash();
+        let deps = vec![dep];
+        let expected = TypedValue {
+            kind: Thing::type_ref(),
+            value: RADTValue::Product(vec![RADTValue::Hash(h)])
+        };
+        assert_eq!(input.to_value(), (expected, deps));
+    }
+
+    #[test]
+    fn test_byte_array_deserialize() {
+        let dep = Item::Blob(Blob{bytes:b"1234".to_vec()});
+        let h = dep.hash();
+        let mut deps = HashMap::new();
+        deps.insert(h, dep);
+        let input = TypedValue {
+            kind: Thing::type_ref(),
+            value: RADTValue::Product(vec![RADTValue::Hash(h)])
+        };
+
+        assert_eq!(Thing::from_value(&input, &deps).unwrap(), Thing(*b"1234"));
+    }
+}
