@@ -173,12 +173,24 @@ fn parse_hash(bytes: &[u8]) -> Result<Hash, MonsterError> {
     }
 }
 
-// recursive algebraic data type
-// allows cyclical references
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub struct RADT {
-    pub uniqueness: [u8; 16],
-    pub items: Vec<RADTItem>,
+bridged_group! {
+    #![uniq(*b"core:radt-------")]
+    // recursive algebraic data type
+    // allows cyclical references
+    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+    pub struct RADT {
+        pub uniqueness: [u8; 16],
+        pub items: Vec<RADTItem>,
+    }
+
+    #[derive(Clone, Debug, PartialEq, Eq, Hash)]
+    pub enum RADTItem {
+        // Reference to a separate RADT - the hash and cycle index.
+        ExternalType(TypeRef),
+        Sum(Vec<RADTItem>),
+        Product(Vec<RADTItem>),
+        CycleRef(usize),
+    }
 }
 
 impl Serializable for RADT {
@@ -200,15 +212,6 @@ impl Decodable for RADT {
         uniqueness.copy_from_slice(uniq);
         Ok((rest, RADT { uniqueness, items }))
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum RADTItem {
-    // Reference to a separate RADT - the hash and cycle index.
-    ExternalType(TypeRef),
-    Sum(Vec<RADTItem>),
-    Product(Vec<RADTItem>),
-    CycleRef(usize),
 }
 
 impl Display for RADT {
