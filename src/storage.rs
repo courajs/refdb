@@ -230,7 +230,6 @@ impl<'a> Db<'a> {
             return Ok(None);
         }
         let hash = h.unwrap();
-        println!("got hash");
         self.get_env(hash)
     }
 

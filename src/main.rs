@@ -81,7 +81,7 @@ fn run_app() -> Result<(), Error> {
 
     match args[1].deref() {
         "foo" => {
-            dbg!(String::radt());
+            dbg!(String::type_ref());
         },
         "list_of_type" => {
             if args.len() <= 2 {
@@ -146,10 +146,7 @@ fn run_app() -> Result<(), Error> {
         },
 
         "list_types" => {
-            println!("before");
             let env = db.get_default_env()?.unwrap();
-            println!("after");
-
 
             let mut types: Vec<Hash> = Vec::new();
             {

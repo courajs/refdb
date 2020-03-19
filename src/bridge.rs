@@ -310,7 +310,6 @@ impl Bridged for String {
 
 impl DeserializeFromRADTValue for String {
     fn deserialize(val: &RADTValue, deps: & impl DependencySource) -> Result<Self, MonsterError> {
-        println!("deser string");
         let (_,t_string) = String::radt();
         let body = sure!(val, RADTValue::Hash(h) => h; return Err(MonsterError::BridgedMistypedDependency));
         let bytes = match deps.get(&body) {
@@ -434,13 +433,15 @@ impl Labeled for LabelSet {
         // 0: LabelSet
         // 1: Label
         // 2: LabeledItem
-        // 3: nil
+        // 3: Nil
         // 4: List<Label>
         // 5: Cons<Label>
         LabelSet(vec![
             Label {
-                name: "Nil".to_owned(),
-                item: LabeledItem::Product(Vec::new()),
+                name: "LabelSet".to_owned(),
+                item: LabeledItem::Product(vec![
+                    Label { name: "labels".to_owned(), item: LabeledItem::Type },
+                ]),
             },
             Label {
                 name: "Label".to_owned(),
@@ -450,52 +451,37 @@ impl Labeled for LabelSet {
                 ]),
             },
             Label {
-                name: "LabelCons".to_owned(),
-                item: LabeledItem::Product(vec![
-                    Label { name: "head".to_owned(), item: LabeledItem::Type },
-                    Label { name: "tail".to_owned(), item: LabeledItem::Type },
-                ]),
-            },
-            Label {
-                name: "LabelList".to_owned(),
-                item: LabeledItem::Sum(vec![
-                    Label { name: "nil".to_owned(), item: LabeledItem::Type },
-                    Label { name: "cons".to_owned(), item: LabeledItem::Type },
-                ]),
-            },
-            Label {
-                name: "LabeledItem::Product".to_owned(),
-                item: LabeledItem::Type,
-            },
-            Label {
-                name: "LabeledItem::Sum".to_owned(),
-                item: LabeledItem::Type,
-            },
-            Label {
                 name: "LabeledItem".to_owned(),
                 item: LabeledItem::Sum(vec![
-                    Label { name: "product".to_owned(), item: LabeledItem::Type },
-                    Label { name: "sum".to_owned(), item: LabeledItem::Type },
-                    Label { name: "type".to_owned(), item: LabeledItem::Type },
+                    Label { name: "Product".to_owned(), item: LabeledItem::Product(vec![
+                            Label { name: "fields".to_owned(), item: LabeledItem::Type }])},
+                    Label { name: "Sum".to_owned(), item: LabeledItem::Product(vec![
+                            Label { name: "variants".to_owned(), item: LabeledItem::Type }])},
+                    Label { name: "Type".to_owned(), item: LabeledItem::Product(Vec::new()) },
                 ]),
             },
             Label {
-                name: "LabelCons".to_owned(),
-                item: LabeledItem::Product(vec![
-                    Label { name: "head".to_owned(), item: LabeledItem::Type },
-                    Label { name: "tail".to_owned(), item: LabeledItem::Type },
-                ]),
+                name: "Nil".to_owned(),
+                item: LabeledItem::Product(Vec::new()),
             },
             Label {
-                name: "LabelList".to_owned(),
+                name: "List<Label>".to_owned(),
                 item: LabeledItem::Sum(vec![
                     Label { name: "nil".to_owned(), item: LabeledItem::Type },
                     Label { name: "cons".to_owned(), item: LabeledItem::Type },
+                ]),
+            },
+            Label {
+                name: "Cons<Label>".to_owned(),
+                item: LabeledItem::Product(vec![
+                    Label { name: "head".to_owned(), item: LabeledItem::Type },
+                    Label { name: "tail".to_owned(), item: LabeledItem::Type },
                 ]),
             },
         ])
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
