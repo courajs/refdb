@@ -21,12 +21,54 @@ use rhai::engine::{
 
 use crate::core::*;
 use crate::types::*;
+use bridged_group::*;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FullType {
-    pub radt: RADT,
-    pub item: usize,
+
+use crate as rf0;
+bridged_group! {
+    #![uniq(*b"core:function---")]
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct FunctionDefinition {
+        pub signature: FunctionSignature,
+        pub dependencies: BTreeMap<String, FunctionReference>,
+        pub body: String,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct FunctionSignature {
+        pub inputs: Vec<Kind>,
+        pub out: Box<Kind>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq, Hash)]
+    pub enum FunctionReference {
+        Builtin(usize),
+        // TODO: HACK: this really points to a FunctionDefinition.
+        // But because this is used to generate the radt, it affects
+        // itself. Really this is because split point vs inline is conflated
+        // with ExternalType vs CycleRef. If we add ability to split at
+        // CycleRefs we can clean this up.
+        Definition(Hash!(ANY_TYPE_REF)),
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum Kind {
+        Blob,
+        Typing,
+        Value(FullType),
+        Function(FunctionSignature),
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub struct FullType {
+        pub radt: RADT,
+        pub item: usize,
+    }
 }
+
+
+
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -76,13 +118,6 @@ impl Value {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Kind {
-    Blob,
-    Typing,
-    Value(FullType),
-    Function(FunctionSignature),
-}
 use std::any::TypeId;
 impl Kind {
     fn to_value_type_id(&self) -> TypeId {
@@ -108,11 +143,6 @@ impl Kind {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FunctionSignature {
-    pub inputs: Vec<Kind>,
-    pub out: Box<Kind>,
-}
 impl FunctionSignature {
     fn args_to_type_ids(&self) -> Vec<TypeId> {
         self.inputs.iter().map(Kind::to_value_type_id).collect()
@@ -228,13 +258,6 @@ impl PreparedFunction {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FunctionDefinition {
-    pub signature: FunctionSignature,
-    pub dependencies: BTreeMap<String, FunctionReference>,
-    pub body: String,
-}
-
 impl FunctionDefinition {
     fn builtin_deps(&self) -> Vec<usize> {
         self.dependencies.iter().filter_map(|(_,fref)| match fref {
@@ -280,12 +303,6 @@ impl FunctionDefinition {
             body: self.body,
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum FunctionReference {
-    Builtin(usize),
-    Definition(Hash),
 }
 
 #[cfg(test)]

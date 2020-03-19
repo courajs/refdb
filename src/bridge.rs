@@ -489,7 +489,7 @@ mod tests {
     fn test_roundtrip<T: Bridged + Eq + std::fmt::Debug>(input: T) {
         let _ = T::radt();
         let (val, mut deps) = input.to_value();
-        let env = deps.into_iter().map(|i| (i.hash(), i)).collect();
+        let env: HashMap<Hash, Item> = deps.into_iter().map(|i| (i.hash(), i)).collect();
         let result = T::from_value(&val, &env).unwrap();
         assert_eq!(input, result);
     }
@@ -567,7 +567,6 @@ mod tests {
         test_roundtrip(e);
     }
 
-    #[ignore]
     #[test]
     fn test_function_def() {
         use crate::func::*;
@@ -588,112 +587,112 @@ mod tests {
 }
 
 // use crate::func::{ };
-impl Bridged for crate::func::FunctionDefinition {
-    fn group_ids() -> HashSet<TypeId> {
-        todo!()
-    }
-    fn radt() -> (RADT, TypeRef) {
-        let (_,t_string) = String::radt();
-        let (_,t_usize) = usize::radt();
-        let (_,t_radt) = RADT::radt();
-        let t = RADT {
-            uniqueness: b"core:func-------".to_owned(),
-            items: vec![
-                // 0: FunctionReference
-                RADTItem::Sum(vec![
-                    // Builtin(usize)
-                    RADTItem::ExternalType(t_usize),
-                    // Definition(Hash)
-                    RADTItem::CycleRef(4),
-                ]),
-                // 1: FullType
-                RADTItem::Product(vec![
-                    // radt
-                    RADTItem::ExternalType(t_radt),
-                    // item
-                    RADTItem::ExternalType(t_usize),
-                ]),
-                // 2: Kind
-                RADTItem::Sum(vec![
-                    // Blob
-                    RADTItem::Product(Vec::new()),
-                    // Typing
-                    RADTItem::Product(Vec::new()),
-                    // Value(FullType)
-                    RADTItem::CycleRef(1),
-                    // Function(FunctionSignature)
-                    RADTItem::CycleRef(3),
-                ]),
-                // 3: FunctionSignature
-                RADTItem::Product(vec![
-                    // inputs
-                    RADTItem::CycleRef(5),
-                    // out
-                    RADTItem::CycleRef(2),
-                ]),
-                // 4: FunctionDefinition
-                RADTItem::Product(vec![
-                    // signature
-                    RADTItem::CycleRef(3),
-                    // dependencies
-                    RADTItem::CycleRef(9),
-                    // body
-                    RADTItem::ExternalType(t_string),
-                ]),
-                // 5: List of Kind
-                RADTItem::Sum(vec![
-                    // cons
-                    RADTItem::CycleRef(6),
-                    // nil
-                    RADTItem::CycleRef(7),
-                ]),
-                // 6: Cons of Kind
-                RADTItem::Product(vec![
-                    // head
-                    RADTItem::CycleRef(2),
-                    // tail
-                    RADTItem::CycleRef(5),
-                ]),
-                // 7: Nil
-                RADTItem::Product(Vec::new()),
-                // 8: String=>FunctionReference entry
-                RADTItem::Product(vec![
-                    // name binding
-                    RADTItem::ExternalType(t_string),
-                    // function value
-                    RADTItem::CycleRef(5),
-                ]),
-                // 9: List of String=>FunctionRef entries (Map<String,FunctionRef>)
-                RADTItem::Sum(vec![
-                    // cons
-                    RADTItem::CycleRef(10),
-                    // nil
-                    RADTItem::CycleRef(7),
-                ]),
-                // 10: Cons of entry
-                RADTItem::Product(vec![
-                    // head
-                    RADTItem::CycleRef(8),
-                    // tail
-                    RADTItem::CycleRef(9),
-                ]),
-            ],
-        };
-        let typing = Typing {
-            kind: RADT_TYPE_REF,
-            data: t.hash(),
-        };
-        (t, TypeRef { definition: typing.hash(), item: 4 })
-    }
-
-    fn to_value(&self) -> (TypedValue, Vec<Item>) {
-        todo!()
-    }
-
-    fn from_value(v: &TypedValue, deps: & impl DependencySource) -> Result<Self, MonsterError> {
-        todo!()
-    }
-}
+// impl Bridged for crate::func::FunctionDefinition {
+//     fn group_ids() -> HashSet<TypeId> {
+//         todo!()
+//     }
+//     fn radt() -> (RADT, TypeRef) {
+//         let (_,t_string) = String::radt();
+//         let (_,t_usize) = usize::radt();
+//         let (_,t_radt) = RADT::radt();
+//         let t = RADT {
+//             uniqueness: b"core:func-------".to_owned(),
+//             items: vec![
+//                 // 0: FunctionReference
+//                 RADTItem::Sum(vec![
+//                     // Builtin(usize)
+//                     RADTItem::ExternalType(t_usize),
+//                     // Definition(Hash)
+//                     RADTItem::CycleRef(4),
+//                 ]),
+//                 // 1: FullType
+//                 RADTItem::Product(vec![
+//                     // radt
+//                     RADTItem::ExternalType(t_radt),
+//                     // item
+//                     RADTItem::ExternalType(t_usize),
+//                 ]),
+//                 // 2: Kind
+//                 RADTItem::Sum(vec![
+//                     // Blob
+//                     RADTItem::Product(Vec::new()),
+//                     // Typing
+//                     RADTItem::Product(Vec::new()),
+//                     // Value(FullType)
+//                     RADTItem::CycleRef(1),
+//                     // Function(FunctionSignature)
+//                     RADTItem::CycleRef(3),
+//                 ]),
+//                 // 3: FunctionSignature
+//                 RADTItem::Product(vec![
+//                     // inputs
+//                     RADTItem::CycleRef(5),
+//                     // out
+//                     RADTItem::CycleRef(2),
+//                 ]),
+//                 // 4: FunctionDefinition
+//                 RADTItem::Product(vec![
+//                     // signature
+//                     RADTItem::CycleRef(3),
+//                     // dependencies
+//                     RADTItem::CycleRef(9),
+//                     // body
+//                     RADTItem::ExternalType(t_string),
+//                 ]),
+//                 // 5: List of Kind
+//                 RADTItem::Sum(vec![
+//                     // cons
+//                     RADTItem::CycleRef(6),
+//                     // nil
+//                     RADTItem::CycleRef(7),
+//                 ]),
+//                 // 6: Cons of Kind
+//                 RADTItem::Product(vec![
+//                     // head
+//                     RADTItem::CycleRef(2),
+//                     // tail
+//                     RADTItem::CycleRef(5),
+//                 ]),
+//                 // 7: Nil
+//                 RADTItem::Product(Vec::new()),
+//                 // 8: String=>FunctionReference entry
+//                 RADTItem::Product(vec![
+//                     // name binding
+//                     RADTItem::ExternalType(t_string),
+//                     // function value
+//                     RADTItem::CycleRef(5),
+//                 ]),
+//                 // 9: List of String=>FunctionRef entries (Map<String,FunctionRef>)
+//                 RADTItem::Sum(vec![
+//                     // cons
+//                     RADTItem::CycleRef(10),
+//                     // nil
+//                     RADTItem::CycleRef(7),
+//                 ]),
+//                 // 10: Cons of entry
+//                 RADTItem::Product(vec![
+//                     // head
+//                     RADTItem::CycleRef(8),
+//                     // tail
+//                     RADTItem::CycleRef(9),
+//                 ]),
+//             ],
+//         };
+//         let typing = Typing {
+//             kind: RADT_TYPE_REF,
+//             data: t.hash(),
+//         };
+//         (t, TypeRef { definition: typing.hash(), item: 4 })
+//     }
+// 
+//     fn to_value(&self) -> (TypedValue, Vec<Item>) {
+//         todo!()
+//     }
+// 
+//     fn from_value(v: &TypedValue, deps: & impl DependencySource) -> Result<Self, MonsterError> {
+//         todo!()
+//     }
+// }
 
 
 // impl Bridged for RADT {
