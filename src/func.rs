@@ -196,9 +196,15 @@ fn generate_builtin_map() -> Vec<(FnSpec, Arc<FnIntExt>)> {
         eng.register_fn(&next(), |b: &mut Blob, idx: i64, val: i64| b.bytes[idx as usize] = val as u8);
         // 4: Add a byte to the end of a blob
         eng.register_fn(&next(), |b: &mut Blob, val: i64| b.bytes.push(val as u8));
+        // 5: Immutable blob append
+        eng.register_fn(&next(), |mut a: Blob, mut b: Blob| {
+            a.bytes.append(&mut b.bytes);
+            a
+        });
 
         let mut result: Vec<(FnSpec, Arc<FnIntExt>)> = eng.fns.into_iter()
-            // Have to ignore builtins like +
+            // Have to ignore builtins like +, *, etc. All registered in 
+            // rhai/src/engine.rs#register_default_lib
             .filter(|(spec,_)| {
                 usize::from_str_radix(&spec.ident, 10).is_ok()
             }).collect();

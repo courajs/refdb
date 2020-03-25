@@ -4,7 +4,6 @@ use std::collections::BTreeMap;
 
 use bridged_group::*;
 
-use crate::lang::AST;
 use crate::error::*;
 use crate::core::Hash;
 use crate::types::TypeRef;

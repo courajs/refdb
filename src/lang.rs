@@ -12,6 +12,7 @@ use nom::{
     },
     branch::alt,
     bytes::complete::{
+        tag,
         take,
         take_while1,
         escaped_transform,
@@ -23,10 +24,13 @@ use nom::{
         one_of, none_of,
         digit1, hex_digit1,
         multispace0, multispace1,
+        space0, space1,
+        newline,
     },
     combinator::{
         not, map, opt, all_consuming, recognize,
         map_parser,
+        verify,
     },
     multi::{
         many0, many1,
@@ -59,12 +63,64 @@ pub fn process_statements(input: &str) -> Result<(Vec<TypeDef>, Vec<ValueAssignm
     }
 }
 
-type Parsed<'a> = IResult<&'a str, AST<'a>, VerboseError<&'a str>>;
+pub type Ident = String;
 
-#[derive(Debug, PartialEq, Eq)]
-pub enum AST<'a> {
-    String(String),
-    Typedef(&'a str, TypeSpec<'a>),
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionDef<'a> {
+    signature: FunctionSig<'a>,
+    dependencies: Vec<(Ident, FunctionRef<'a>)>,
+    body: String,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub struct FunctionSig<'a> {
+    args: Vec<TypeReference<'a>>,
+    ret: TypeReference<'a>,
+}
+#[derive(Debug, Clone, PartialEq)]
+pub enum FunctionRef<'a> {
+    Builtin(usize),
+    Defined(ObjectReference<'a>),
+}
+
+fn parse_function_definition(input: &str) -> IResult<&str, FunctionDef, VerboseError<&str>> {
+    map(tuple((
+        multispace0,
+        parse_function_sig,
+        squishy(tag("===")),
+        parse_function_deps,
+        squishy(tag("===")),
+        map(verify(all, |s| rhai::Engine::compile(s).is_ok()), String::from)
+    )), |(_,signature,_,dependencies,_,body)| FunctionDef{signature, dependencies, body})
+    (input)
+}
+
+fn parse_function_sig(input: &str) -> IResult<&str, FunctionSig, VerboseError<&str>> {
+    map(separated_pair(
+        delimited(
+            squishy(char('(')),
+            separated_list(squishy(char(',')), parse_typeref),
+            squishy(char(')')),
+        ),
+        squishy(tag("->")),
+        parse_typeref,
+    ), |(args, ret)| FunctionSig{args, ret})
+    (input)
+}
+fn parse_function_deps(input: &str) -> IResult<&str, Vec<(Ident, FunctionRef)>, VerboseError<&str>> {
+    separated_list(delimited(space0, newline, space0), parse_function_dep)(input)
+}
+fn parse_function_dep(input: &str) -> IResult<&str, (Ident, FunctionRef), VerboseError<&str>> {
+    separated_pair(map(parse_identifier, String::from), squishy(char('=')), parse_function_ref)(input)
+}
+fn parse_function_ref(input: &str) -> IResult<&str, FunctionRef, VerboseError<&str>> {
+    alt((
+        map(parse_decimal_integer, FunctionRef::Builtin),
+        map(parse_object_ref, FunctionRef::Defined),
+    ))(input)
+}
+
+fn all(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
+    Ok((&input[0..0], input))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -198,7 +254,7 @@ fn parse_value_item(input: &str) -> IResult<&str, ValueItem, VerboseError<&str>>
 
 fn parse_item_specifier(input: &str) -> IResult<&str, ItemSpecifier, VerboseError<&str>> {
     alt((
-        map(decimal_integer, ItemSpecifier::Index),
+        map(parse_decimal_integer, ItemSpecifier::Index),
         map(parse_identifier, ItemSpecifier::Name),
     ))(input)
 }
@@ -281,7 +337,7 @@ fn parse_identifier(input: &str) -> IResult<&str, &str, VerboseError<&str>> {
 
 fn parse_hash_typeref(input: &str) -> IResult<&str, TypeReference, VerboseError<&str>> {
     map(
-        separated_pair(parse_hash, char(':'), decimal_integer),
+        separated_pair(parse_hash, char(':'), parse_decimal_integer),
         |(h, cycle)| match h {
             HashRef::Full(h) => TypeReference::Hash(h, cycle),
             HashRef::Prefix(bytes) => TypeReference::ShortHash(bytes, cycle),
@@ -311,7 +367,7 @@ fn hex_byte(input: &str) -> IResult<&str, u8, VerboseError<&str>> {
     let (_, digits) = hex_digit1(digits)?;
     Ok((rest, u8::from_str_radix(digits, 16).unwrap()))
 }
-fn decimal_integer(input: &str) -> IResult<&str, usize, VerboseError<&str>> {
+fn parse_decimal_integer(input: &str) -> IResult<&str, usize, VerboseError<&str>> {
     let (rest, digits) = digit1(input)?;
     Ok((rest, usize::from_str_radix(digits, 10).unwrap()))
 }
@@ -398,7 +454,7 @@ mod tests {
 
     #[test]
     fn test_usize() {
-        assert_eq!(decimal_integer("123 "), Ok((" ", 123usize)));
+        assert_eq!(parse_decimal_integer("123 "), Ok((" ", 123usize)));
     }
 
     #[test]
@@ -495,5 +551,39 @@ mod tests {
         };
 
         assert_eq!(parse_value_expression(input).assert(input), expected);
+    }
+
+    #[test]
+    fn test_function_def() {
+        use indoc::indoc as dedent;
+        let input = dedent!("
+            (Blob, Quote, #abcd:2) -> #1234:0
+            ===
+            new_blob = 12
+            foo = #4b4130006c30573751e151d5e74229a2d8dce1552271bebc24e54bbcc5af3fed
+            ===
+            let b = new_blob();
+            foo(b, arg0);
+        ");
+        let body_start = input.find("let b =").unwrap();
+        let expected = FunctionDef {
+            signature: FunctionSig {
+                args: vec![
+                    TypeReference::Name("Blob"),
+                    TypeReference::Name("Quote"),
+                    TypeReference::ShortHash(hex!("abcd").to_vec(), 2),
+                ],
+                ret: TypeReference::ShortHash(hex!("1234").to_vec(), 0),
+            },
+            dependencies: vec![
+                (String::from("new_blob"), FunctionRef::Builtin(12)),
+                (String::from("foo"), FunctionRef::Defined(
+                        ObjectReference::Hash(Hash(hex!("4b4130006c30573751e151d5e74229a2d8dce1552271bebc24e54bbcc5af3fed")))
+                )),
+            ],
+            body: String::from(&input[body_start..]),
+        };
+
+        assert_eq!(parse_function_definition(input).unwrap().1, expected)
     }
 }
