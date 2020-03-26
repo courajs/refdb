@@ -586,4 +586,18 @@ mod tests {
 
         assert_eq!(parse_function_definition(input).unwrap().1, expected)
     }
+
+    #[test]
+    fn test_invalid_rhai() {
+        use indoc::indoc as dedent;
+        let input = dedent!("
+            (Blob, Quote, #abcd:2) -> #1234:0
+            ===
+            new_blob = 12
+            foo = #4b4130006c30573751e151d5e74229a2d8dce1552271bebc24e54bbcc5af3fed
+            ===
+            +**+
+        ");
+        assert!(parse_function_definition(input).is_err());
+    }
 }
