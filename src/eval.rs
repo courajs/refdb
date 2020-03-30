@@ -2,8 +2,11 @@ use std::collections::HashSet;
 use std::collections::HashMap;
 use std::collections::BTreeMap;
 
+use hex_literal::hex;
+
 use bridged_group::*;
 
+use crate::bridge::*;
 use crate::error::*;
 use crate::core::Hash;
 use crate::types::TypeRef;
@@ -11,7 +14,10 @@ use crate::lang::{
     TypeSpec, TypeDef,
     ValueExpr, ValueItem,
     VariantDef, FieldsDef, ItemSpecifier, Literal,
+    Ident, ObjectReference, TypeReference,
+    FunctionDef, FunctionSig, FunctionRef,
 };
+use crate::func::*;
 use crate::types::RADTItem;
 use crate::labels::LabelSet;
 use crate::labels::Label;
@@ -441,8 +447,91 @@ pub struct Definitions {
     pub labels: LabelSet,
 }
 
-// #[derive(Debug, PartialEq, Eq)]
-// pub struct 
+#[derive(Debug, Clone, PartialEq)]
+pub enum NameResolution {
+    Type(Hash, usize),
+    Object(Hash),
+}
+
+pub trait Resolver {
+    fn name(&self, s: &str) -> Result<NameResolution, MonsterError>;
+    fn prefix(&self, pre: &[u8]) -> Result<TypedReference, MonsterError>;
+    fn hash(&self, h: Hash) -> Result<TypedReference, MonsterError>;
+    // trusting the type/object typing coming from name resolution, since
+    // presumably it's from the environment which should be checked as it's
+    // constructed.
+    // But for hashes and short hashes we need to confirm that they're actually
+    // pointing to radts
+    fn typeref(&self, ty: &TypeReference) -> Result<TypeRef, MonsterError> {
+        let check_hash = |h: Hash| -> Result<(), MonsterError> {
+            let r = self.hash(h)?;
+            if r.kind == RADT_TYPE_REF {
+                Ok(())
+            } else {
+                Err(MonsterError::Formatted(format!("Tried to reference {} as a type in function definition", h)))
+            }
+        };
+        match ty {
+            TypeReference::Hash(h,item) => {
+                let r = self.hash(*h)?;
+                if r.kind == RADT_TYPE_REF {
+                    Ok(TypeRef{definition:*h, item: *item})
+                } else {
+                    Err(MonsterError::Formatted(format!("Tried to reference {} as a type in function definition", h)))
+                }
+            },
+            TypeReference::ShortHash(pre,item) => {
+                let r = self.prefix(pre)?;
+                if r.kind == RADT_TYPE_REF {
+                    Ok(TypeRef{definition:r.hash, item: *item})
+                } else {
+                    Err(MonsterError::Formatted(format!("Tried to reference {} as a type in function definition", hex::encode(pre))))
+                }
+            }
+            TypeReference::Name(s) => {
+                match self.name(s)? {
+                    NameResolution::Type(h, item) => Ok(TypeRef{definition:h,item}),
+                    // TODO: we should also allow this to point to a TypeRef object
+                    NameResolution::Object(h) => Err(MonsterError::Todo("referenced variable in type location")),
+                }
+            }
+        }
+    }
+}
+struct TestResolver<Q,R,S> where
+    Q: Fn(&str) -> NameResolution,
+    R: Fn(&[u8]) -> TypedReference,
+    S: Fn(Hash) -> TypedReference
+{
+    name: Q,
+    pre: R,
+    hash: S,
+}
+impl<Q,R,S> Resolver for TestResolver<Q,R,S> where
+    Q: Fn(&str) -> NameResolution,
+    R: Fn(&[u8]) -> TypedReference,
+    S: Fn(Hash) -> TypedReference
+{
+    fn name(&self, s: &str) -> Result<NameResolution, MonsterError> {
+        Ok((self.name)(s))
+    }
+    fn prefix(&self, pre: &[u8]) -> Result<TypedReference, MonsterError> {
+        Ok((self.pre)(pre))
+    }
+    fn hash(&self, h: Hash) -> Result<TypedReference, MonsterError> {
+        Ok((self.hash)(h))
+    }
+}
+
+
+fn resolve_function_def(def: &FunctionDef, r: &impl Resolver) -> Result<FunctionDefinition, MonsterError> {
+    let sig = FunctionSignature {
+
+    };
+
+    fn typeref(&self, ty: &TypeReference) -> Result<TypeRef, MonsterError> {
+    todo!()
+}
 
 #[cfg(test)]
 mod tests {
@@ -744,7 +833,7 @@ mod tests {
         //     name: &HashMap<&str, Hash>,
         //     prefix_resolutions: &HashMap<&[u8], Hash>
         // ) -> Result<(TypedValue, Vec<TypedValue>, HashSet<ExpectedTyping>),
-        //     MonsterError> {
+        //     MonsterError> 
         //
         assert_eq!(
             validate_instantiate(
@@ -756,5 +845,69 @@ mod tests {
             ).expect("this should work"),
             expected,
         );
+    }
+
+    #[test]
+    fn test_resolve_func() {
+        let input = FunctionDef {
+            signature: FunctionSig {
+                args: vec![
+                    TypeReference::Name("Blob"),
+                    TypeReference::Name("Quote"),
+                    TypeReference::ShortHash(hex!("abcd").to_vec(), 2),
+                ],
+                ret: TypeReference::ShortHash(hex!("1234").to_vec(), 0),
+            },
+            dependencies: vec![
+                (String::from("new_blob"), FunctionRef::Builtin(12)),
+                (String::from("foo"), FunctionRef::Defined(
+                        ObjectReference::Hash(Hash(hex!("4b4130006c30573751e151d5e74229a2d8dce1552271bebc24e54bbcc5af3fed")))
+                )),
+            ],
+            body: String::from("let b = new_blob(); foo(b, arg0);"),
+        };
+        let quote = TypeRef { definition: Hash::of(b"owl"), item: 3 };
+        let abc = Hash(hex!("abcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcdabcd"));
+        let onetwothree = Hash(hex!("1234123412341234123412341234123412341234123412341234123412341234"));
+        use std::iter::FromIterator;
+        let expected = FunctionDefinition {
+            signature: FunctionSignature {
+                inputs: vec![Kind::Blob, Kind::Value(quote), Kind::Value(TypeRef{definition: abc, item: 2})],
+                out: Box::new(Kind::Value(TypeRef{definition:onetwothree,item:0})),
+            },
+            dependencies: BTreeMap::from_iter([
+                (String::from("new_blob"), FunctionReference::Builtin(12)),
+                (String::from("foo"), FunctionReference::Definition(Hash(hex!("4b4130006c30573751e151d5e74229a2d8dce1552271bebc24e54bbcc5af3fed")))),
+            ].iter().cloned()),
+            body: String::from("let b = new_blob(); foo(b, arg0);"),
+        };
+        
+        let resolver = TestResolver {
+            name: |s: &str| {
+                if s == "Quote" {
+                    NameResolution::Type(Hash::of(b"owl"), 3)
+                } else { panic!("weird name resolution") }
+            },
+            pre: |pre: &[u8]| {
+                match pre {
+                    // abcd
+                    [171, 205] => TypedReference{kind: RADT_TYPE_REF, hash:abc,},
+                    // 1234
+                    [18, 52] => TypedReference{kind: RADT_TYPE_REF, hash:onetwothree},
+                    _ => panic!("weird short hash"),
+                }
+            },
+            hash: |h: Hash| {
+                if h == Hash(hex!("4b4130006c30573751e151d5e74229a2d8dce1552271bebc24e54bbcc5af3fed")) {
+                    TypedReference {
+                        kind: FunctionDefinition::type_ref(),
+                        hash: h,
+                    }
+                } else {
+                    panic!("ahh")
+                }
+            }
+        };
+        assert_eq!(expected, resolve_function_def(&input, &resolver).unwrap());
     }
 }

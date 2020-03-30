@@ -56,14 +56,8 @@ bridged_group! {
     pub enum Kind {
         Blob,
         Typing,
-        Value(FullType),
+        Value(TypeRef),
         Function(FunctionSignature),
-    }
-
-    #[derive(Debug, Clone, PartialEq, Eq)]
-    pub struct FullType {
-        pub radt: RADT,
-        pub item: usize,
     }
 }
 

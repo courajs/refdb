@@ -63,6 +63,17 @@ impl TypedValue {
         }
     }
 }
+
+// A type-annotated hash.
+// Same structure as a Typing, but idea is different.
+// The hash here points to an actual typing, that will
+// have the same kind as this does.
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
+pub struct TypedReference {
+    pub kind: TypeRef,
+    pub hash: Hash,
+}
+
 use crate as rf0;
 bridged_group! {
     #![uniq(*b"core:TypeRef----")]

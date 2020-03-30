@@ -67,14 +67,14 @@ pub type Ident = String;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionDef<'a> {
-    signature: FunctionSig<'a>,
-    dependencies: Vec<(Ident, FunctionRef<'a>)>,
-    body: String,
+    pub signature: FunctionSig<'a>,
+    pub dependencies: Vec<(Ident, FunctionRef<'a>)>,
+    pub body: String,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub struct FunctionSig<'a> {
-    args: Vec<TypeReference<'a>>,
-    ret: TypeReference<'a>,
+    pub args: Vec<TypeReference<'a>>,
+    pub ret: TypeReference<'a>,
 }
 #[derive(Debug, Clone, PartialEq)]
 pub enum FunctionRef<'a> {
